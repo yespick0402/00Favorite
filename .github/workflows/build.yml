@@ -100,7 +100,7 @@ jobs:
               'FavoriteWindowSnapHotKeys.shared.start()',
               'FavoriteWindowSnapHotKeys.shared.stop()',
               'FavoriteWindowSnapHotKeys.shared.refresh()',
-              'FavoriteWindowSnapHotKeys.shared.recordInSettings(',
+              'func recordInSettings(',
               'FavoriteAwakeHotKey.shared.suspendForRecorder()',
               'FavoriteAwakeHotKey.shared.resumeAfterRecorder()',
               'favorite_magnet_s3a_shortcuts_v1',
@@ -114,7 +114,7 @@ jobs:
               'FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()',
               'FavoriteMagnetPreferences.shared.layoutForEdge(',
               'case maximize, center, restore, centerTwoThirds',
-              '36: "↩"', 'event.keyCode != 53 else',
+              'Binding(code: 36, modifiers: two, keyLabel: "↩")', 'event.keyCode != 53 else',
               '창 정렬 설정…'
           ]
           combined = Path('combined_main.swift').read_text()
