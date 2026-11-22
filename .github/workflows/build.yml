@@ -7,7 +7,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261121-HK13-SCREEN1-HIF1
+  FAVORITE_BUILD_ID: FAV-20261122-HK13-LOGIN1
 
 jobs:
   build:
@@ -56,6 +56,11 @@ jobs:
           print('HOTKEY / WHEEL ISOLATION: VERIFIED')
           PY
           grep -q 'canObserveActionRelease' combined_main.swift || { echo 'ERROR: Control 액션 드롭 보완 소스 누락'; exit 1; }
+          # LOGIN1: macOS ServiceManagement API와 설정 UI, 메뉴 액션이 함께 들어왔는지 확인합니다.
+          grep -q 'import ServiceManagement' Part1.swift || { echo 'ERROR: ServiceManagement import 누락'; exit 1; }
+          grep -q 'SMAppService.mainApp' Part1.swift || { echo 'ERROR: 로그인 항목 등록 API 누락'; exit 1; }
+          grep -q 'Mac 로그인 시 00Favorite 자동 실행' Part1.swift || { echo 'ERROR: 로그인 자동 실행 설정 UI 누락'; exit 1; }
+          grep -q '#selector(toggleLaunchAtLogin)' Part2.swift || { echo 'ERROR: 로그인 항목 메뉴 누락'; exit 1; }
           # HIF1 regression guard: camera HEIF in Sony .HIF naming is a supported photo.
           python3 - <<'PY_HIF'
           import re
@@ -82,7 +87,7 @@ jobs:
           echo '=== Full source macOS SDK typecheck ==='
           # 실제 앱 컴파일과 동일한 대상과 프레임워크로 통합 소스를 타입 검사합니다.
           swiftc -typecheck combined_main.swift \
-            -framework IOKit -framework Carbon \
+            -framework IOKit -framework Carbon -framework ServiceManagement \
             -target arm64-apple-macos14.0
           echo 'macOS SDK Swift typecheck: PASSED'
 
@@ -248,7 +253,7 @@ jobs:
           # Any late shell assertion failure now prints the exact failing command.
           trap 'rc=$?; echo "::error title=Compile/package step failed::Bash line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR
           swiftc combined_main.swift \
-            -framework IOKit -framework Carbon \
+            -framework IOKit -framework Carbon -framework ServiceManagement \
             -o 00Favorite.app/Contents/MacOS/00Favorite \
             -target arm64-apple-macos14.0 -Osize
           strip -x 00Favorite.app/Contents/MacOS/00Favorite
@@ -312,6 +317,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-HK13-ScreenOnly1-HIF1-ExifToolFix1-Mac-ARM64
+          name: 00Favorite-4.8-HK13-LOGIN1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
