@@ -331,6 +331,7 @@ struct FavoriteMagnetSettingsView: View {
                                                     .background(current == selected ? Color.accentColor.opacity(0.22) : Color.gray.opacity(0.10),
                                                                 in: RoundedRectangle(cornerRadius: 6))
                                                 }.buttonStyle(.plain)
+                                                 .disabled(selected == .restore)
                                             } else {
                                                 Text("화면").font(.caption).foregroundColor(.secondary)
                                                     .frame(maxWidth: .infinity, minHeight: 43)
