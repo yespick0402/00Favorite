@@ -3,11 +3,13 @@ name: Build 00Favorite App
 on:
   push:
     branches: [main, master]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S2R1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3A
 
 jobs:
   build:
@@ -86,6 +88,27 @@ jobs:
           assert '#selector(toggleWindowSnapDragEnabled)' in src, 'ERROR: menu toggle missing'
           print('MAGNET-S2 passive mouse drag / overlay / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
+          # MAGNET-S3A: global hotkeys must use Carbon, never an extra event tap.
+          python3 - <<'PY_MAGNET_S3A'
+          from pathlib import Path
+          src = Path('Part2.swift').read_text()
+          required = [
+              'final class FavoriteWindowSnapHotKeys: NSObject',
+              'RegisterEventHotKey(binding.code, binding.modifiers',
+              'UnregisterEventHotKey(ref)',
+              'FavoriteWindowSnapHotKeys.shared.start()',
+              'FavoriteWindowSnapHotKeys.shared.stop()',
+              'FavoriteWindowSnapHotKeys.shared.refresh()',
+              'FavoriteWindowSnapHotKeys.shared.menuItem()',
+              'FavoriteAwakeHotKey.shared.suspendForRecorder()',
+              'FavoriteAwakeHotKey.shared.resumeAfterRecorder()',
+              'favorite_magnet_s3a_shortcuts_v1',
+          ]
+          missing = [item for item in required if item not in src]
+          if missing: raise SystemExit('ERROR: MAGNET-S3A incomplete: ' + ', '.join(missing))
+          assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder wheel event tap count changed'
+          print('MAGNET-S3A Carbon hotkeys / Finder isolation: VERIFIED')
+          PY_MAGNET_S3A
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
           # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
           python3 - <<'PY_AX_CAST'
