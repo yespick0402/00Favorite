@@ -7,7 +7,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S1
+  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S1R1
 
 jobs:
   build:
@@ -76,6 +76,16 @@ jobs:
           assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: extra event tap introduced'
           print('MAGNET-S1 menu / AX movement / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
+          # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
+          # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
+          python3 - <<'PY_AX_CAST'
+          import re
+          from pathlib import Path
+          for line_number, line in enumerate(Path('Part2.swift').read_text().splitlines(), 1):
+              if re.search(r'\bas\?\s*(?:AXUIElement|AXValue)\b', line):
+                  raise SystemExit(f'ERROR: Part2.swift:{line_number}: CF AX opaque type must use CFGetTypeID before explicit cast')
+          print('Swift 6.1 AX opaque CoreFoundation casts: VERIFIED')
+          PY_AX_CAST
           # HIF1 regression guard: camera HEIF in Sony .HIF naming is a supported photo.
           python3 - <<'PY_HIF'
           import re
