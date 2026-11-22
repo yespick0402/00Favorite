@@ -2535,7 +2535,7 @@ final class FavoriteWindowSnap {
         case leftHalf = 1, rightHalf, topHalf, bottomHalf
         case topLeft, topRight, bottomLeft, bottomRight
         case leftThird, middleThird, rightThird, leftTwoThirds, rightTwoThirds
-        case maximize, center, restore, centerTwoThirds // 새 케이스를 끝에 추가해 기존 저장 단축키 rawValue 보존
+        case maximize, center, restore, centerTwoThirds, nextDisplay, previousDisplay // 기존 rawValue 유지; 이동 명령은 끝에 추가
     }
 
     private struct OriginalWindow {
@@ -2602,6 +2602,17 @@ final class FavoriteWindowSnap {
         }
 
         guard let screen = screenContaining(current) else { return "창을 표시할 모니터를 찾지 못했습니다." }
+        // MAGNET-S3C: 현재 창의 위치/크기를 유지한 채 물리적으로 인접한 디스플레이로 이동.
+        if layout == .nextDisplay || layout == .previousDisplay {
+            guard let destination = adjacentDisplay(from: screen, forward: layout == .nextDisplay) else {
+                return "연결된 디스플레이가 하나뿐입니다. 두 번째 모니터 연결 후 사용할 수 있습니다."
+            }
+            let target = mappedFrame(current, from: screen.visibleFrame, to: destination.visibleFrame)
+            if key == nil {
+                originals[pid, default: []].append(OriginalWindow(window: window, frame: current))
+            }
+            return setFrame(target, for: window)
+        }
         let target = FavoriteMagnetPreferences.shared.customFrame(layout, visible: screen.visibleFrame)
             ?? layoutFrame(layout, visible: screen.visibleFrame, current: current)
         if key == nil { originals[pid, default: []].append(OriginalWindow(window: window, frame: current)) }
@@ -2794,6 +2805,33 @@ final class FavoriteWindowSnap {
         })
     }
 
+    // 디스플레이 배열의 API 순서 대신 실제 화면상의 좌→우, 동률이면 위→아래 순서 사용.
+    // 가장 끝 모니터에서 다음/이전 이동은 순환합니다.
+    private func adjacentDisplay(from current: NSScreen, forward: Bool) -> NSScreen? {
+        let ordered = NSScreen.screens.sorted { a, b in
+            if a.frame.midX != b.frame.midX { return a.frame.midX < b.frame.midX }
+            return a.frame.midY > b.frame.midY
+        }
+        guard ordered.count > 1,
+              let index = ordered.firstIndex(where: { $0.frame == current.frame }) else { return nil }
+        let shift = forward ? 1 : ordered.count - 1
+        return ordered[(index + shift) % ordered.count]
+    }
+
+    // 물리적으로 다른 해상도/배율의 모니터에서도 원래 창 크기 및 상대 위치를 최대한 보존.
+    // 이동할 모니터가 작으면 보이는 영역 안으로 크기와 위치를 안전하게 제한합니다.
+    private func mappedFrame(_ current: CGRect, from source: CGRect, to dest: CGRect) -> CGRect {
+        let width = min(max(CGFloat(1), current.width), dest.width)
+        let height = min(max(CGFloat(1), current.height), dest.height)
+        let spanX = max(CGFloat(1), source.width - current.width)
+        let spanY = max(CGFloat(1), source.height - current.height)
+        let xFraction = min(CGFloat(1), max(CGFloat(0), (current.minX - source.minX) / spanX))
+        let yFraction = min(CGFloat(1), max(CGFloat(0), (source.maxY - current.maxY) / spanY))
+        return CGRect(x: dest.minX + xFraction * max(0, dest.width - width),
+                      y: dest.maxY - height - yFraction * max(0, dest.height - height),
+                      width: width, height: height).integral
+    }
+
     private func layoutFrame(_ layout: Layout, visible v: CGRect, current c: CGRect) -> CGRect {
         let w = v.width, h = v.height
         let halfW = floor(w / 2), halfH = floor(h / 2), thirdW = floor(w / 3)
@@ -2816,7 +2854,7 @@ final class FavoriteWindowSnap {
         case .center:
             let size = CGSize(width: min(c.width, w), height: min(c.height, h))
             return CGRect(x: v.midX - size.width / 2, y: v.midY - size.height / 2, width: size.width, height: size.height)
-        case .restore:       return c
+        case .restore, .nextDisplay, .previousDisplay: return c
         }
     }
 }
@@ -3029,7 +3067,8 @@ final class FavoriteWindowSnapHotKeys: NSObject {
         (.rightThird, "오른쪽 1/3"), (.leftTwoThirds, "왼쪽 2/3"),
         (.rightTwoThirds, "오른쪽 2/3"), (.centerTwoThirds, "가운데 2/3"),
         (.maximize, "최대 크기"),
-        (.center, "가운데 배치"), (.restore, "원래 위치 복원")
+        (.center, "가운데 배치"), (.restore, "원래 위치 복원"),
+        (.nextDisplay, "다음 디스플레이"), (.previousDisplay, "이전 디스플레이")
     ]
     // 사진에 표시된 Magnet 기본 키 조합: Control+Option [+Command] + 문자/화살표.
     // macOS 가상 키 코드(ANSI)를 사용하며 기존 잠자기 방지 Ctrl+Option+.과 겹치지 않습니다.
@@ -3592,6 +3631,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ("오른쪽 1/3", .rightThird),
                 ("왼쪽 2/3", .leftTwoThirds), ("가운데 2/3", .centerTwoThirds), ("오른쪽 2/3", .rightTwoThirds)
             ]),
+            ("디스플레이 이동", [
+                ("다음 디스플레이", .nextDisplay), ("이전 디스플레이", .previousDisplay)
+            ]),
             ("기타", [
                 ("화면에 최대한 크게 (전체 화면 모드 아님)", .maximize),
                 ("화면 가운데 배치", .center),
@@ -3606,7 +3648,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let entry = NSMenuItem(title: label, action: #selector(applyWindowSnap(_:)), keyEquivalent: "")
                 entry.target = self
                 entry.tag = layout.rawValue
-                entry.isEnabled = snap.isEnabled
+                let isDisplayMove = layout == .nextDisplay || layout == .previousDisplay
+                entry.isEnabled = snap.isEnabled && (!isDisplayMove || NSScreen.screens.count > 1)
                 child.addItem(entry)
             }
             item.submenu = child
