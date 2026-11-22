@@ -1,0 +1,207 @@
+name: Apply 00Favorite MAGNET S3-A (GitHub only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: favorite-apply-s3a-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply-s3a:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - name: Checkout current main (no changes yet)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Apply validated S3-A transformation to staging files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_S3A_GITHUB_WORKFLOW_00FAVORITE'
+          #!/usr/bin/env python3
+          """00Favorite Magnet S3-A 안전 적용기 (GitHub Actions Python 3).
+          
+          입력: GitHub Actions checkout의 Part2.swift + .github/workflows/build.yml,
+                GitHub Actions의 체크아웃 소스만 사용. 로컬 Mac 실행 불필요.
+          출력: 00Favorite_S3A_Ready/Part2.swift 및 .github/workflows/build.yml.
+          원본 소스 및 GitHub 저장소는 절대 수정하지 않습니다.
+          """
+          from pathlib import Path
+          import sys
+          import re
+          import hashlib
+          
+          ROOT = Path.cwd()
+          OUT = ROOT / "00Favorite_S3A_Ready"
+          
+          
+          def read_source(path):
+              local = ROOT / path
+              if local.is_file():
+                  print(f"[GitHub checkout 소스 읽음] {path}")
+                  return local.read_text(encoding="utf-8")
+              raise RuntimeError(f"GitHub checkout 필수 파일 누락: {path}")
+          
+          
+          def require_once(src, needle, label):
+              count = src.count(needle)
+              if count != 1:
+                  raise RuntimeError(f"안전 검사 실패: {label} 기준 지점이 {count}개입니다 (필요 1개). 소스 변경을 중단합니다.")
+              return src
+          
+          
+          def replace_once(src, before, after, label):
+              require_once(src, before, label)
+              return src.replace(before, after, 1)
+          
+          
+          def main():
+              part = read_source("Part2.swift")
+              workflow = read_source(".github/workflows/build.yml")
+              if "MAGNET-S3A" in part or "FavoriteWindowSnapHotKeys" in part:
+                  raise RuntimeError("S3-A가 이미 적용된 소스입니다. 중복 설치를 중단합니다.")
+              for marker in ("final class FavoriteWindowSnapDrag", "final class FavoriteWindowSnap {",
+                             "class AppDelegate: NSObject, NSApplicationDelegate {",
+                             "private var movedWindow = false", "guard movedWindow else { return }",
+                             "guard movedWindow, let tracked = drag,"):
+                  if marker not in part:
+                      raise RuntimeError(f"기존 S2R1 안전장치 누락: {marker}")
+              # 프로그램 실행에 영향이 있는 Hook은 정확한 단일 지점만 수정합니다.
+              class_source = '// MARK: - MAGNET-S3A: 창 정렬 전용 macOS 등록형 전역 단축키\n// Finder 휠의 읽기 전용 이벤트 탭 및 잠자기 방지 핫키와는 다른 서명으로 독립 등록합니다.\n// 기본값은 전체 미지정입니다. 사용자가 지정한 조합만 Carbon에 등록합니다.\nfinal class FavoriteWindowSnapHotKeys: NSObject {\n    static let shared = FavoriteWindowSnapHotKeys()\n    private static let signature: OSType = 0x46575333 // \'FWS3\' (Awake의 \'00FV\'와 구별)\n    private static let storageKey = "favorite_magnet_s3a_shortcuts_v1"\n\n    private struct Binding: Codable {\n        let code: UInt32\n        let modifiers: UInt32\n        let keyLabel: String\n        var label: String {\n            var value = ""\n            if modifiers & UInt32(controlKey) != 0 { value += "⌃" }\n            if modifiers & UInt32(optionKey) != 0 { value += "⌥" }\n            if modifiers & UInt32(shiftKey) != 0 { value += "⇧" }\n            if modifiers & UInt32(cmdKey) != 0 { value += "⌘" }\n            return value + keyLabel\n        }\n    }\n\n    private let layouts: [(FavoriteWindowSnap.Layout, String)] = [\n        (.leftHalf, "왼쪽 절반"), (.rightHalf, "오른쪽 절반"),\n        (.topHalf, "위쪽 절반"), (.bottomHalf, "아래쪽 절반"),\n        (.topLeft, "왼쪽 위"), (.topRight, "오른쪽 위"),\n        (.bottomLeft, "왼쪽 아래"), (.bottomRight, "오른쪽 아래"),\n        (.leftThird, "왼쪽 1/3"), (.middleThird, "가운데 1/3"),\n        (.rightThird, "오른쪽 1/3"), (.leftTwoThirds, "왼쪽 2/3"),\n        (.rightTwoThirds, "오른쪽 2/3"), (.maximize, "최대 크기"),\n        (.center, "가운데 배치"), (.restore, "원래 위치 복원")\n    ]\n    private var bindings: [String: Binding] = [:]\n    private var refs: [Int: EventHotKeyRef] = [:]\n    private var handlerRef: EventHandlerRef?\n    private var active = false\n    private var failedLayouts = Set<Int>()\n    private override init() {\n        super.init()\n        if let saved = UserDefaults.standard.data(forKey: Self.storageKey),\n           let decoded = try? PropertyListDecoder().decode([String: Binding].self, from: saved) {\n            bindings = decoded\n        }\n    }\n\n    private static let callback: EventHandlerUPP = { _, event, _ in\n        guard let event = event else { return OSStatus(eventNotHandledErr) }\n        var identifier = EventHotKeyID()\n        let status = GetEventParameter(\n            event, UInt32(kEventParamDirectObject), EventParamType(typeEventHotKeyID),\n            nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier\n        )\n        guard status == noErr, identifier.signature == FavoriteWindowSnapHotKeys.signature,\n              let layout = FavoriteWindowSnap.Layout(rawValue: Int(identifier.id)) else {\n            return OSStatus(eventNotHandledErr)\n        }\n        // 단축키는 원래 활성 앱의 창을 대상으로 합니다. 키/마우스 이벤트를 가로채지 않습니다.\n        DispatchQueue.main.async {\n            guard FavoriteWindowSnap.shared.isEnabled,\n                  let front = NSWorkspace.shared.frontmostApplication,\n                  front.activationPolicy == .regular,\n                  front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }\n            if let error = FavoriteWindowSnap.shared.apply(layout, to: front.processIdentifier) {\n                ToolWindowManager.shared.showBanner(message: "창 정렬: " + error)\n            }\n        }\n        return noErr\n    }\n\n    private func ensureHandler() -> Bool {\n        if handlerRef != nil { return true }\n        var spec = EventTypeSpec(eventClass: UInt32(kEventClassKeyboard),\n                                 eventKind: UInt32(kEventHotKeyPressed))\n        return InstallEventHandler(GetApplicationEventTarget(), Self.callback,\n                                   1, &spec, nil, &handlerRef) == noErr\n    }\n\n    private func register(_ layout: FavoriteWindowSnap.Layout, _ binding: Binding) -> OSStatus {\n        guard ensureHandler() else { return OSStatus(eventNotHandledErr) }\n        var ref: EventHotKeyRef?\n        let identifier = EventHotKeyID(signature: Self.signature, id: UInt32(layout.rawValue))\n        let result = RegisterEventHotKey(binding.code, binding.modifiers, identifier,\n                                         GetApplicationEventTarget(), 0, &ref)\n        if result == noErr, let installed = ref { refs[layout.rawValue] = installed }\n        return result\n    }\n    private func unregisterAll() {\n        for ref in refs.values { _ = UnregisterEventHotKey(ref) }\n        refs.removeAll()\n    }\n    private func persist() {\n        if let saved = try? PropertyListEncoder().encode(bindings) {\n            UserDefaults.standard.set(saved, forKey: Self.storageKey)\n        }\n    }\n    func start() {\n        active = true\n        refresh()\n    }\n    func stop() {\n        active = false\n        unregisterAll()\n        if let ref = handlerRef { _ = RemoveEventHandler(ref); handlerRef = nil }\n    }\n    func refresh() {\n        unregisterAll()\n        failedLayouts.removeAll()\n        guard active, FavoriteWindowSnap.shared.isEnabled else { return }\n        for (layout, _) in layouts {\n            if let binding = bindings[String(layout.rawValue)], register(layout, binding) != noErr {\n                failedLayouts.insert(layout.rawValue)\n            }\n        }\n    }\n    private func label(for layout: FavoriteWindowSnap.Layout) -> String {\n        bindings[String(layout.rawValue)]?.label ?? "미지정"\n    }\n    func menuItem() -> NSMenuItem {\n        let parent = NSMenuItem(title: "⌨️ 창 정렬 전역 단축키", action: nil, keyEquivalent: "")\n        let submenu = NSMenu(title: "창 정렬 전역 단축키")\n        let intro = NSMenuItem(title: "기본 미지정 · 직접 등록 시에만 작동", action: nil, keyEquivalent: "")\n        intro.isEnabled = false\n        submenu.addItem(intro)\n        if !failedLayouts.isEmpty {\n            let warning = NSMenuItem(title: "⚠︎ \\(failedLayouts.count)개 단축키 등록 실패 · 다른 앱과 충돌 확인", action: nil, keyEquivalent: "")\n            warning.isEnabled = false\n            submenu.addItem(warning)\n        }\n        submenu.addItem(NSMenuItem.separator())\n        for (layout, name) in layouts {\n            let row = NSMenuItem(title: "\\(name) · \\(label(for: layout))", action: nil, keyEquivalent: "")\n            let actions = NSMenu(title: name)\n            let edit = NSMenuItem(title: "단축키 직접 지정…", action: #selector(recordShortcut(_:)), keyEquivalent: "")\n            edit.target = self\n            edit.tag = layout.rawValue\n            actions.addItem(edit)\n            let clear = NSMenuItem(title: "이 단축키 해제", action: #selector(clearShortcut(_:)), keyEquivalent: "")\n            clear.target = self\n            clear.tag = layout.rawValue\n            clear.isEnabled = bindings[String(layout.rawValue)] != nil\n            actions.addItem(clear)\n            row.submenu = actions\n            submenu.addItem(row)\n        }\n        submenu.addItem(NSMenuItem.separator())\n        let clearAll = NSMenuItem(title: "모든 창 정렬 단축키 초기화…", action: #selector(clearAllShortcuts), keyEquivalent: "")\n        clearAll.target = self\n        clearAll.isEnabled = !bindings.isEmpty\n        submenu.addItem(clearAll)\n        parent.submenu = submenu\n        parent.isEnabled = FavoriteWindowSnap.shared.isEnabled\n        return parent\n    }\n    private func updateMenu() {\n        (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()\n    }\n    private func showError(_ message: String) {\n        let alert = NSAlert()\n        alert.alertStyle = .warning\n        alert.messageText = "창 정렬 단축키를 저장하지 못했습니다"\n        alert.informativeText = message\n        alert.addButton(withTitle: "확인")\n        NSApp.activate(ignoringOtherApps: true)\n        alert.runModal()\n    }\n    private func save(_ layout: FavoriteWindowSnap.Layout, binding: Binding?) -> String? {\n        if let new = binding {\n            if bindings.contains(where: { key, value in\n                key != String(layout.rawValue) && value.code == new.code && value.modifiers == new.modifiers\n            }) {\n                return "이미 다른 창 정렬 항목에 지정된 조합입니다."\n            }\n        }\n        let key = String(layout.rawValue)\n        let old = bindings[key]\n        // 같은 키를 다시 지정할 수도 있으므로 이전 등록을 잠깐 해제하고 시도합니다.\n        unregisterAll()\n        if let new = binding {\n            let result = register(layout, new)\n            if result != noErr {\n                refresh() // 성공한 이전 설정을 다시 복구합니다.\n                return "macOS 또는 다른 앱과 단축키가 충돌할 수 있습니다. (코드 \\(result))\\n기존 단축키는 유지합니다."\n            }\n            bindings[key] = new\n        } else {\n            bindings.removeValue(forKey: key)\n        }\n        persist()\n        refresh()\n        if old == nil && binding == nil { return nil }\n        return nil\n    }\n    @objc private func clearShortcut(_ item: NSMenuItem) {\n        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }\n        if let error = save(layout, binding: nil) { showError(error) }\n        updateMenu()\n    }\n    @objc private func clearAllShortcuts() {\n        let alert = NSAlert()\n        alert.messageText = "모든 창 정렬 단축키를 해제할까요?"\n        alert.informativeText = "Finder 휠과 잠자기 방지 단축키에는 영향을 주지 않습니다."\n        alert.addButton(withTitle: "초기화")\n        alert.addButton(withTitle: "취소")\n        NSApp.activate(ignoringOtherApps: true)\n        guard alert.runModal() == .alertFirstButtonReturn else { return }\n        unregisterAll()\n        bindings.removeAll()\n        persist()\n        refresh()\n        updateMenu()\n    }\n    @objc private func recordShortcut(_ item: NSMenuItem) {\n        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }\n        let name = layouts.first(where: { $0.0 == layout })?.1 ?? "창 정렬"\n        let alert = NSAlert()\n        alert.messageText = "\\(name) 단축키 지정"\n        alert.informativeText = "Control/Option/Command/Shift 중 2개 이상과 문자 또는 방향키를 함께 누르세요.\\n선택한 조합이 아래에 표시되면 \'저장\'을 누르세요."\n        alert.addButton(withTitle: "저장")\n        alert.addButton(withTitle: "취소")\n        alert.buttons[0].isEnabled = false\n        var selected: Binding?\n        // 녹화 중 기존 Carbon 창 정렬 키와 잠자기 토글이 실행되지 않도록 일시 해제.\n        unregisterAll()\n        FavoriteAwakeHotKey.shared.suspendForRecorder()\n        NSApp.activate(ignoringOtherApps: true)\n        let recorder = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in\n            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)\n            var modifiers: UInt32 = 0\n            var count = 0\n            if flags.contains(.control) { modifiers |= UInt32(controlKey); count += 1 }\n            if flags.contains(.option) { modifiers |= UInt32(optionKey); count += 1 }\n            if flags.contains(.shift) { modifiers |= UInt32(shiftKey); count += 1 }\n            if flags.contains(.command) { modifiers |= UInt32(cmdKey); count += 1 }\n            // 최소 두 수정키를 요구해 시스템/일반 타이핑과의 충돌을 최소화합니다.\n            guard count >= 2, event.keyCode != 53, event.keyCode != 36 else { return event }\n            let special: [UInt16: String] = [123: "←", 124: "→", 125: "↓", 126: "↑",\n                                            48: "Tab", 49: "Space", 51: "Delete"]\n            let label = special[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "Key\\(event.keyCode)"\n            selected = Binding(code: UInt32(event.keyCode), modifiers: modifiers, keyLabel: label)\n            alert.informativeText = "선택한 단축키: \\(selected?.label ?? "")\\n\'저장\'을 클릭하면 다른 앱과의 충돌을 검사합니다."\n            alert.buttons[0].isEnabled = true\n            return nil // 앱의 설정창에서만 캡처하며 다른 앱 이벤트는 가로채지 않습니다.\n        }\n        let choice = alert.runModal()\n        if let recorder = recorder { NSEvent.removeMonitor(recorder) }\n        FavoriteAwakeHotKey.shared.resumeAfterRecorder()\n        if choice == .alertFirstButtonReturn, let selected = selected {\n            if let error = save(layout, binding: selected) { showError(error) }\n        }\n        refresh()\n        updateMenu()\n    }\n}'
+              part = replace_once(part,
+                  "class AppDelegate: NSObject, NSApplicationDelegate {",
+                  class_source + "\nclass AppDelegate: NSObject, NSApplicationDelegate {",
+                  "S3-A 단축키 관리자 삽입")
+              part = replace_once(part,
+                  "        FavoriteAwakeHotKey.shared.startMonitoring()\n",
+                  "        FavoriteAwakeHotKey.shared.startMonitoring()\n        FavoriteWindowSnapHotKeys.shared.start() // MAGNET-S3A\n",
+                  "앱 실행 시 전역 단축키 시작")
+              part = replace_once(part,
+                  "        FavoriteAwakeHotKey.shared.stopMonitoring()\n",
+                  "        FavoriteWindowSnapHotKeys.shared.stop() // MAGNET-S3A\n        FavoriteAwakeHotKey.shared.stopMonitoring()\n",
+                  "앱 종료 시 단축키 해제")
+              part = replace_once(part,
+                  "        submenu.addItem(edgeInfo)\n        submenu.addItem(NSMenuItem.separator())\n        for line in FavoriteWindowSnapDrag.shared.diagnostics {",
+                  "        submenu.addItem(edgeInfo)\n        submenu.addItem(NSMenuItem.separator())\n"
+                  "        submenu.addItem(FavoriteWindowSnapHotKeys.shared.menuItem()) // MAGNET-S3A\n"
+                  "        submenu.addItem(NSMenuItem.separator())\n        for line in FavoriteWindowSnapDrag.shared.diagnostics {",
+                  "창 정렬 메뉴에 S3-A 단축키 설정 연결")
+              part = replace_once(part,
+                  "        snap.setEnabled(!snap.isEnabled)\n        FavoriteWindowSnapDrag.shared.refreshMonitoring()\n        updateStatusBarMenu()",
+                  "        snap.setEnabled(!snap.isEnabled)\n        FavoriteWindowSnapDrag.shared.refreshMonitoring()\n"
+                  "        FavoriteWindowSnapHotKeys.shared.refresh() // MAGNET-S3A\n        updateStatusBarMenu()",
+                  "창 정렬 ON/OFF에 단축키도 연동")
+          
+              # 구형 build.yml가 S2 검사를 잘못한 상태여도 해당 검사를 함께 바로잡습니다.
+              old_guard = "           assert 'actuallyMovedWindow' in src, 'ERROR: window-movement safety guard missing'"
+              fixed = "\n".join([
+                  "           assert 'private var movedWindow = false' in src, 'ERROR: window movement state missing'",
+                  "           assert 'guard movedWindow else { return }' in src, 'ERROR: preview movement guard missing'",
+                  "           assert 'guard movedWindow, let tracked = drag,' in src, 'ERROR: snap movement guard missing'",
+              ])
+              if old_guard in workflow:
+                  workflow = replace_once(workflow, old_guard, fixed, "S2 창 이동 안전 검사 오류 수정")
+              elif "assert 'private var movedWindow = false' in src" not in workflow:
+                  raise RuntimeError("build.yml의 창 이동 검사 형식이 다릅니다. 안전을 위해 자동 적용을 중단합니다.")
+          
+              workflow = replace_once(workflow,
+                  "FAV-20261122-HK13-MAGNET-S2R1",
+                  "FAV-20261122-HK13-MAGNET-S3A",
+                  "GitHub Actions 빌드 식별자 업데이트")
+              s3_check = '''           # MAGNET-S3A: 등록형 전역 단축키 설정 + 충돌 방지 + 앱 종료 시 해제.
+                     python3 - <<'PY_MAGNET_S3A'
+                     from pathlib import Path
+                     src = Path('Part2.swift').read_text()
+                     must = [
+                         'final class FavoriteWindowSnapHotKeys: NSObject',
+                         'RegisterEventHotKey(binding.code, binding.modifiers',
+                         'UnregisterEventHotKey(ref)',
+                         'FavoriteWindowSnapHotKeys.shared.start()',
+                         'FavoriteWindowSnapHotKeys.shared.stop()',
+                         'FavoriteWindowSnapHotKeys.shared.refresh()',
+                         'FavoriteWindowSnapHotKeys.shared.menuItem()',
+                         'FavoriteAwakeHotKey.shared.suspendForRecorder()',
+                         'FavoriteAwakeHotKey.shared.resumeAfterRecorder()',
+                         'favorite_magnet_s3a_shortcuts_v1'
+                     ]
+                     missing = [x for x in must if x not in src]
+                     if missing: raise SystemExit('ERROR: MAGNET-S3A incomplete: ' + ', '.join(missing))
+                     assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder wheel event tap count changed'
+                     print('MAGNET-S3A local custom Carbon hotkeys / isolation: VERIFIED')
+                     PY_MAGNET_S3A
+          '''
+              workflow = replace_once(workflow,
+                  "           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.",
+                  s3_check + "           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.",
+                  "GitHub Actions S3-A 안전성 검사 추가")
+          
+              # 손상 방지: 전역 수동 이벤트 탭 1개 보장, 업로드 대상 파일에만 쓰기.
+              if part.count("CGEvent.tapCreate(") != 1:
+                  raise RuntimeError("기존 Finder 읽기 전용 이벤트 탭 수가 달라졌습니다. 중단합니다.")
+              assert "MAGNET-S3A" in part and "MAGNET-S3A" in workflow
+              for relative, content in (("Part2.swift", part), (".github/workflows/build.yml", workflow)):
+                  dest = OUT / relative
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  dest.write_text(content, encoding="utf-8")
+                  sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                  print(f"[생성 완료] {dest}  SHA-256 {sha}")
+              print("\n스테이징 생성 완료: 이 다음부터 GitHub Actions가 검사 및 커밋을 처리합니다.")
+              print("주의: 이 도구는 Mac 컴파일을 실행하지 않습니다. GitHub Actions의 macOS 타입검사/빌드가 최종 검증입니다.")
+          
+          
+          if __name__ == "__main__":
+              try:
+                  main()
+              except Exception as error:
+                  print(f"\n[적용 중단] {error}", file=sys.stderr)
+                  sys.exit(1)
+          PY_S3A_GITHUB_WORKFLOW_00FAVORITE
+          test -s 00Favorite_S3A_Ready/Part2.swift
+          test -s 00Favorite_S3A_Ready/.github/workflows/build.yml
+          cp 00Favorite_S3A_Ready/Part2.swift Part2.swift
+          cp 00Favorite_S3A_Ready/.github/workflows/build.yml .github/workflows/build.yml
+          cat Part1.swift Part2.swift > combined_main.swift
+          git diff --check
+          echo 'S3-A staged: pass. No commit yet.'
+
+      - name: Verify actual Swift compiler on macOS (before commit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun swiftc --version
+          swiftc -typecheck combined_main.swift \
+            -framework IOKit -framework Carbon -framework ServiceManagement \
+            -target arm64-apple-macos14.0
+          echo 'Swift macOS SDK typecheck PASSED. Safe to commit.'
+
+      - name: Commit only the two target files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- Part2.swift .github/workflows/build.yml
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'No changes produced; cannot apply twice.' >&2; exit 1; }
+          git commit -m 'MAGNET S3-A: custom window snap hotkeys (safe)' -- Part2.swift .github/workflows/build.yml
+          git push origin HEAD:main
+          echo 'Commit uploaded to GitHub main.'
+
+      - name: Trigger existing Build 00Favorite App workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run build.yml --ref main
+          echo 'Build requested. Open Actions > Build 00Favorite App to see results.'
