@@ -2607,6 +2607,101 @@ final class FavoriteWindowSnap {
         return setFrame(target, for: window)
     }
 
+
+    // MAGNET-S2: 실제 창을 드래그한 경우에만 제어할 수 있도록 창을 읽습니다.
+    // 입력 이벤트를 변경하지 않고, 접근성 hit-test로 제목 표시줄의 일반 창만 수락합니다.
+    struct DraggedWindow {
+        let element: AXUIElement
+        let pid: pid_t
+        let originalFrame: CGRect
+    }
+
+    func candidateForTitlebarDrag(at pointer: CGPoint) -> DraggedWindow? {
+        guard isEnabled, AXIsProcessTrusted() else { return nil }
+        var hit: AXUIElement?
+        let axY = Float(primaryScreenTop - pointer.y)
+        let system = AXUIElementCreateSystemWide()
+        guard AXUIElementCopyElementAtPosition(system, Float(pointer.x), axY, &hit) == .success,
+              let first = hit else { return nil }
+        var element: AXUIElement? = first
+        for _ in 0..<14 {
+            guard let current = element else { break }
+            if stringAttribute(current, name: kAXRoleAttribute as CFString) == (kAXWindowRole as String),
+               let candidate = verifiedDragCandidate(current, at: pointer) {
+                return candidate
+            }
+            // 자식 요소에서 AXWindow를 직접 찾을 수 있으면 부모 트리보다 우선합니다.
+            var windowRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(current, kAXWindowAttribute as CFString, &windowRef) == .success,
+               let rawWindow = windowRef, CFGetTypeID(rawWindow) == AXUIElementGetTypeID(),
+               let candidate = verifiedDragCandidate(rawWindow as! AXUIElement, at: pointer) {
+                return candidate
+            }
+            var parentRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parentRef) == .success,
+                  let rawParent = parentRef, CFGetTypeID(rawParent) == AXUIElementGetTypeID() else { break }
+            element = rawParent as! AXUIElement
+        }
+        return nil
+    }
+
+    private func verifiedDragCandidate(_ window: AXUIElement, at pointer: CGPoint) -> DraggedWindow? {
+        guard stringAttribute(window, name: kAXRoleAttribute as CFString) == (kAXWindowRole as String) else { return nil }
+        if let subrole = stringAttribute(window, name: kAXSubroleAttribute as CFString),
+           subrole != (kAXStandardWindowSubrole as String) { return nil }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(window, &pid) == .success,
+              pid > 0, pid != ProcessInfo.processInfo.processIdentifier,
+              let frame = readFrame(window),
+              frame.width >= 180, frame.height >= 90 else { return nil }
+        // 타이틀바의 빈 공간을 드래그한 경우만 추적. 내용물/파일/윈도우 크기조절 제외.
+        // 00Favorite 자체 영역, 신호등 버튼 85pt, 아래쪽 콘텐츠는 감시하지 않습니다.
+        let distanceFromTop = frame.maxY - pointer.y
+        guard distanceFromTop >= -3, distanceFromTop <= 78,
+              pointer.x >= frame.minX + 85, pointer.x <= frame.maxX - 15 else { return nil }
+        return DraggedWindow(element: window, pid: pid, originalFrame: frame)
+    }
+
+    func frameOfDraggedWindow(_ drag: DraggedWindow) -> CGRect? {
+        readFrame(drag.element)
+    }
+
+    func dragTarget(at pointer: CGPoint, current: CGRect) -> (layout: Layout, rect: CGRect)? {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) else { return nil }
+        let v = screen.visibleFrame
+        // Dock/메뉴바가 차지하는 영역에서도 가장 가까운 작업 영역을 기준으로 인식합니다.
+        let zone: CGFloat = 34
+        let left = pointer.x <= v.minX + zone
+        let right = pointer.x >= v.maxX - zone
+        let top = pointer.y >= v.maxY - zone
+        let bottom = pointer.y <= v.minY + zone
+        let layout: Layout
+        if left && top { layout = .topLeft }
+        else if right && top { layout = .topRight }
+        else if left && bottom { layout = .bottomLeft }
+        else if right && bottom { layout = .bottomRight }
+        else if left { layout = .leftHalf }
+        else if right { layout = .rightHalf }
+        else if top { layout = .maximize }
+        else if bottom { layout = .bottomHalf }
+        else { return nil }
+        return (layout, layoutFrame(layout, visible: v, current: current))
+    }
+
+    // 원래 크기 복원을 위해 마우스를 누르기 전 창 프레임을 저장합니다.
+    // S1 메뉴의 정렬/복원 상태와 동일한 originals 저장소를 사용합니다.
+    func applyDraggedLayout(_ layout: Layout, drag: DraggedWindow, in pointer: CGPoint) -> String? {
+        guard isEnabled, AXIsProcessTrusted() else { return "창 정렬이 꺼져 있거나 접근성 권한이 없습니다." }
+        guard let current = readFrame(drag.element),
+              let target = dragTarget(at: pointer, current: current),
+              target.layout == layout else { return "창을 놓을 때 정렬 영역에서 벗어났습니다." }
+        let key = originals[drag.pid]?.firstIndex(where: { CFEqual($0.window, drag.element) })
+        if key == nil {
+            originals[drag.pid, default: []].append(OriginalWindow(window: drag.element, frame: drag.originalFrame))
+        }
+        return setFrame(target.rect, for: drag.element)
+    }
+
     private func stringAttribute(_ element: AXUIElement, name: CFString) -> String? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name, &value) == .success else { return nil }
@@ -2701,6 +2796,130 @@ final class FavoriteWindowSnap {
     }
 }
 
+
+// MARK: - MAGNET-S2: 읽기 전용 전역 창 드래그 인식 + 배치 미리보기
+// NSEvent global monitor는 원래 앱의 마우스 이벤트를 변경하거나 가로채지 않습니다.
+// Finder 파일 드래그, 텍스트 선택 및 00Favorite의 CGEventTap은 그대로 유지합니다.
+final class FavoriteWindowSnapDrag {
+    static let shared = FavoriteWindowSnapDrag()
+    private let key = "favorite_magnet_stage2_drag_enabled_v1"
+    private var monitor: Any?
+    private var drag: FavoriteWindowSnap.DraggedWindow?
+    private var actuallyMovedWindow = false
+    private var lastSampleTime: TimeInterval = 0
+    private var preview: NSPanel?
+    private var lastPreviewFrame: CGRect = .null
+    private var lastPreviewLayout: FavoriteWindowSnap.Layout?
+
+    var isEnabled: Bool { UserDefaults.standard.bool(forKey: key) }
+    var isMonitoring: Bool { monitor != nil }
+
+    func setEnabled(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: key)
+        refreshMonitoring()
+    }
+
+    func refreshMonitoring() {
+        guard isEnabled, FavoriteWindowSnap.shared.isEnabled, AXIsProcessTrusted() else {
+            stopMonitoring()
+            return
+        }
+        guard monitor == nil else { return }
+        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            self?.process(event)
+        }
+    }
+
+    func stopMonitoring() {
+        if let monitor = monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        cancelDrag()
+    }
+
+    private func process(_ event: NSEvent) {
+        guard isEnabled, FavoriteWindowSnap.shared.isEnabled else { cancelDrag(); return }
+        let pointer = NSEvent.mouseLocation
+        switch event.type {
+        case .leftMouseDown:
+            cancelDrag()
+            drag = FavoriteWindowSnap.shared.candidateForTitlebarDrag(at: pointer)
+            actuallyMovedWindow = false
+            lastSampleTime = 0
+        case .leftMouseDragged:
+            guard let tracked = drag else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - lastSampleTime > 0.025 else { return }
+            lastSampleTime = now
+            guard let current = FavoriteWindowSnap.shared.frameOfDraggedWindow(tracked) else {
+                cancelDrag()
+                return
+            }
+            // 단순 파일 드래그 또는 텍스트 선택에서는 창 자체의 위치가 움직이지 않습니다.
+            if abs(current.minX - tracked.originalFrame.minX) > 7 ||
+               abs(current.minY - tracked.originalFrame.minY) > 7 {
+                actuallyMovedWindow = true
+            }
+            guard actuallyMovedWindow else { return }
+            guard let target = FavoriteWindowSnap.shared.dragTarget(at: pointer, current: current) else {
+                hidePreview()
+                return
+            }
+            showPreview(target.rect, layout: target.layout)
+        case .leftMouseUp:
+            defer { cancelDrag() }
+            guard actuallyMovedWindow, let tracked = drag,
+                  let current = FavoriteWindowSnap.shared.frameOfDraggedWindow(tracked),
+                  let target = FavoriteWindowSnap.shared.dragTarget(at: pointer, current: current),
+                  lastPreviewLayout == target.layout else { return }
+            // 파일 드롭이나 마우스 클릭에는 절대 창 위치 쓰기를 수행하지 않습니다.
+            _ = FavoriteWindowSnap.shared.applyDraggedLayout(target.layout, drag: tracked, in: pointer)
+        default:
+            break
+        }
+    }
+
+    private func showPreview(_ rect: CGRect, layout: FavoriteWindowSnap.Layout) {
+        guard !rect.isNull, rect.width > 0, rect.height > 0 else { hidePreview(); return }
+        if let preview = preview, lastPreviewFrame == rect, lastPreviewLayout == layout, preview.isVisible { return }
+        lastPreviewLayout = layout
+        lastPreviewFrame = rect
+        let panel: NSPanel
+        if let previous = preview { panel = previous }
+        else {
+            panel = NSPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.backgroundColor = .clear
+            panel.isOpaque = false
+            panel.hasShadow = false
+            panel.ignoresMouseEvents = true
+            panel.level = .statusBar
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            let content = NSView(frame: NSRect(origin: .zero, size: rect.size))
+            content.wantsLayer = true
+            content.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.22).cgColor
+            content.layer?.borderWidth = 2
+            content.layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.80).cgColor
+            content.layer?.cornerRadius = 9
+            panel.contentView = content
+            preview = panel
+        }
+        panel.setFrame(rect, display: true)
+        panel.orderFrontRegardless()
+    }
+
+    private func hidePreview() {
+        preview?.orderOut(nil)
+        lastPreviewFrame = .null
+        lastPreviewLayout = nil
+    }
+
+    private func cancelDrag() {
+        hidePreview()
+        drag = nil
+        actuallyMovedWindow = false
+        lastSampleTime = 0
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     // MAGNET-S1: 메뉴에서 앞쪽 앱을 선택하기 위한 PID만 저장 (키/마우스 감시 없음)
     private var lastWindowSnapAppPID: pid_t?
@@ -2771,6 +2990,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(rememberLastWindowSnapApp(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        // MAGNET-S2: 시작 시 저장된 설정을 읽되, 별도 사용자 동의가 없으면 기본 OFF.
+        FavoriteWindowSnapDrag.shared.refreshMonitoring()
 
         FavoritePreferencesMigration.runOnce()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -3001,9 +3222,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let help = NSMenuItem(title: "선택한 앱의 창 정렬 · 손쉬운 사용 권한 필요", action: nil, keyEquivalent: "")
         help.isEnabled = false
         submenu.addItem(help)
-        let next = NSMenuItem(title: "화면 가장자리 드래그 정렬은 2단계에서 추가", action: nil, keyEquivalent: "")
-        next.isEnabled = false
-        submenu.addItem(next)
+        let edgeItem = NSMenuItem(title: "화면 가장자리 드래그 정렬", action: #selector(toggleWindowSnapDragEnabled), keyEquivalent: "")
+        edgeItem.target = self
+        edgeItem.state = FavoriteWindowSnapDrag.shared.isEnabled ? .on : .off
+        edgeItem.isEnabled = snap.isEnabled
+        submenu.addItem(edgeItem)
+        let edgeInfo = NSMenuItem(title: "제목 표시줄 드래그 → 가장자리 미리보기 → 놓으면 정렬", action: nil, keyEquivalent: "")
+        edgeInfo.isEnabled = false
+        submenu.addItem(edgeInfo)
         parent.submenu = submenu
         return parent
     }
@@ -3011,6 +3237,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleWindowSnapEnabled() {
         let snap = FavoriteWindowSnap.shared
         snap.setEnabled(!snap.isEnabled)
+        FavoriteWindowSnapDrag.shared.refreshMonitoring()
+        updateStatusBarMenu()
+    }
+
+    @objc private func toggleWindowSnapDragEnabled() {
+        let drag = FavoriteWindowSnapDrag.shared
+        drag.setEnabled(!drag.isEnabled)
         updateStatusBarMenu()
     }
 
@@ -3185,6 +3418,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        FavoriteWindowSnapDrag.shared.stopMonitoring()
         NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didActivateApplicationNotification, object: nil)
         FavoriteAwakeHotKey.shared.stopMonitoring()
         FavoriteAwakeManager.shared.shutdown()
