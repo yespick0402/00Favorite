@@ -228,10 +228,12 @@ struct FavoriteMagnetSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("창 정렬 명령").font(.headline).padding(.bottom, 6)
-                    ForEach(groups, id: \.0) { group in
+                    ForEach(groups.indices, id: \.self) { sectionIndex in
+                        let group = groups[sectionIndex]
                         Text(group.0).font(.caption.bold()).foregroundColor(.secondary)
                             .padding(.top, 10)
-                        ForEach(group.1, id: \.0) { entry in
+                        ForEach(group.1.indices, id: \.self) { entryIndex in
+                            let entry = group.1[entryIndex]
                             Button {
                                 selected = entry.0
                             } label: {
