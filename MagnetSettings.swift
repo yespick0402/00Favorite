@@ -81,6 +81,8 @@ final class FavoriteMagnetPreferences: ObservableObject {
         return FavoriteWindowSnap.Layout(rawValue: id)
     }
     func toggleEdge(_ edge: Edge, for layout: FavoriteWindowSnap.Layout) {
+        // 원래 위치 복원은 저장된 이전 창 위치를 사용하므로 드래그 활성 영역에 할당하지 않습니다.
+        guard layout != .restore else { return }
         let old = layoutForEdge(edge)
         dragZones[String(edge.rawValue)] = old == layout ? 0 : layout.rawValue
         UserDefaults.standard.set(dragZones, forKey: edgeKey)
