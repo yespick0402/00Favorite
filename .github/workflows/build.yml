@@ -7,7 +7,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261122-HK13-LOGIN1
+  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S1
 
 jobs:
   build:
@@ -61,6 +61,21 @@ jobs:
           grep -q 'SMAppService.mainApp' Part1.swift || { echo 'ERROR: 로그인 항목 등록 API 누락'; exit 1; }
           grep -q 'Mac 로그인 시 00Favorite 자동 실행' Part1.swift || { echo 'ERROR: 로그인 자동 실행 설정 UI 누락'; exit 1; }
           grep -q '#selector(toggleLaunchAtLogin)' Part2.swift || { echo 'ERROR: 로그인 항목 메뉴 누락'; exit 1; }
+          # MAGNET-S1: 메뉴 기반 AX 창 정렬만 추가 (전역 이벤트 감시 및 핫키 수정 금지).
+          python3 - <<'PY_WINDOW_SNAP'
+          from pathlib import Path
+          src = Path('Part2.swift').read_text()
+          required = [
+              'final class FavoriteWindowSnap', 'AXUIElementCreateApplication(',
+              'AXUIElementSetAttributeValue(', 'kAXFocusedWindowAttribute',
+              'private func makeWindowSnapMenu()', 'makeWindowSnapMenu()',
+              '#selector(applyWindowSnap(_:))', 'NSWorkspace.didActivateApplicationNotification'
+          ]
+          missing = [item for item in required if item not in src]
+          if missing: raise SystemExit('ERROR: MAGNET-S1 source incomplete: ' + ', '.join(missing))
+          assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: extra event tap introduced'
+          print('MAGNET-S1 menu / AX movement / wheel isolation: VERIFIED')
+          PY_WINDOW_SNAP
           # HIF1 regression guard: camera HEIF in Sony .HIF naming is a supported photo.
           python3 - <<'PY_HIF'
           import re
@@ -109,7 +124,7 @@ jobs:
             <key>CFBundleIconFile</key><string>AppIcon</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>4.8</string>
-            <key>CFBundleVersion</key><string>4817</string>
+            <key>CFBundleVersion</key><string>4818</string>
             <key>FavoriteBuildID</key><string>${FAVORITE_BUILD_ID}</string>
             <key>LSMinimumSystemVersion</key><string>14.0</string>
             <key>LSArchitecturePriority</key><array><string>arm64</string></array>
