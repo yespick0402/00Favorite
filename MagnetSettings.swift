@@ -82,7 +82,7 @@ final class FavoriteMagnetPreferences: ObservableObject {
     }
     func toggleEdge(_ edge: Edge, for layout: FavoriteWindowSnap.Layout) {
         // 원래 위치 복원은 저장된 이전 창 위치를 사용하므로 드래그 활성 영역에 할당하지 않습니다.
-        guard layout != .restore else { return }
+        guard layout != .restore && layout != .nextDisplay && layout != .previousDisplay else { return }
         let old = layoutForEdge(edge)
         dragZones[String(edge.rawValue)] = old == layout ? 0 : layout.rawValue
         UserDefaults.standard.set(dragZones, forKey: edgeKey)
@@ -108,17 +108,19 @@ final class FavoriteMagnetPreferences: ObservableObject {
         case .rightTwoThirds: return .init(x: 1.0 / 3.0, top: 0, width: 2.0 / 3.0, height: 1)
         case .maximize: return .init(x: 0, top: 0, width: 1, height: 1)
         case .center, .restore: return .init(x: 0.2, top: 0.2, width: 0.6, height: 0.6)
+        case .nextDisplay, .previousDisplay: return .init(x: 0, top: 0, width: 1, height: 1)
         }
     }
 
     func customFrame(_ layout: FavoriteWindowSnap.Layout, visible v: CGRect) -> CGRect? {
-        guard let rect = customFrames[String(layout.rawValue)], layout != .restore else { return nil }
+        guard layout != .restore && layout != .nextDisplay && layout != .previousDisplay,
+              let rect = customFrames[String(layout.rawValue)] else { return nil }
         return CGRect(x: v.minX + v.width * rect.x,
                       y: v.maxY - v.height * (rect.top + rect.height),
                       width: v.width * rect.width, height: v.height * rect.height)
     }
     func saveFrame(_ frame: NormalizedFrame, for layout: FavoriteWindowSnap.Layout) {
-        guard layout != .restore else { return }
+        guard layout != .restore && layout != .nextDisplay && layout != .previousDisplay else { return }
         let w = max(0.05, min(1, frame.width)), h = max(0.05, min(1, frame.height))
         customFrames[String(layout.rawValue)] = .init(
             x: max(0, min(1 - w, frame.x)), top: max(0, min(1 - h, frame.top)),
@@ -172,7 +174,7 @@ private struct FavoriteMagnetGrid: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    guard layout != .restore else { return }
+                    guard layout != .restore && layout != .nextDisplay && layout != .previousDisplay else { return }
                     let col = min(columns - 1, max(0, Int((value.location.x - 8) /
                                                          max(1, geometry.size.width - 16) * CGFloat(columns))))
                     let row = min(rows - 1, max(0, Int((value.location.y - 8) /
@@ -216,6 +218,7 @@ struct FavoriteMagnetSettingsView: View {
                         (.rightThird, "오른쪽 1/3")]),
             ("2/3 분할", [(.leftTwoThirds, "왼쪽 2/3"), (.centerTwoThirds, "가운데 2/3"),
                            (.rightTwoThirds, "오른쪽 2/3")]),
+            ("디스플레이 이동", [(.nextDisplay, "다음 디스플레이"), (.previousDisplay, "이전 디스플레이")]),
             ("기타", [(.maximize, "최대 크기"), (.center, "가운데 배치"),
                         (.restore, "원래 위치로 복원")])
         ]
@@ -271,12 +274,14 @@ struct FavoriteMagnetSettingsView: View {
                             FavoriteMagnetGrid(layout: selected)
                             Text(selected == .restore
                                  ? "복원은 정렬 전 저장된 크기와 위치를 사용합니다."
-                                 : "격자에서 드래그하면 이 명령의 창 크기와 위치가 변경·저장됩니다.")
+                                 : (selected == .nextDisplay || selected == .previousDisplay)
+                                   ? "디스플레이 이동은 창의 현재 크기·상대 위치를 최대한 유지합니다. 격자 편집은 적용하지 않습니다."
+                                   : "격자에서 드래그하면 이 명령의 창 크기와 위치가 변경·저장됩니다.")
                                 .font(.caption).foregroundColor(.secondary)
                             HStack {
                                 Spacer()
                                 Button("기본 크기·위치로 복원") { prefs.resetFrame(selected) }
-                                    .disabled(selected == .restore)
+                                    .disabled(selected == .restore || selected == .nextDisplay || selected == .previousDisplay)
                             }
                         }.padding(8)
                     }
@@ -331,7 +336,7 @@ struct FavoriteMagnetSettingsView: View {
                                                     .background(current == selected ? Color.accentColor.opacity(0.22) : Color.gray.opacity(0.10),
                                                                 in: RoundedRectangle(cornerRadius: 6))
                                                 }.buttonStyle(.plain)
-                                                 .disabled(selected == .restore)
+                                                 .disabled(selected == .restore || selected == .nextDisplay || selected == .previousDisplay)
                                             } else {
                                                 Text("화면").font(.caption).foregroundColor(.secondary)
                                                     .frame(maxWidth: .infinity, minHeight: 43)
@@ -356,7 +361,12 @@ struct FavoriteMagnetSettingsView: View {
                                 .font(.caption2).foregroundColor(.secondary)
                         }.padding(8)
                     }
-                    Text("디스플레이 이동은 다중 모니터 기능(S3-C)에서 별도로 추가할 예정입니다.")
+                    HStack {
+                        Image(systemName: "display.2")
+                        Text("연결된 디스플레이: \(NSScreen.screens.count)대")
+                    }
+                    .font(.caption2).foregroundColor(.secondary)
+                    Text("2대 이상의 모니터가 연결되면 다음/이전 디스플레이로 창을 이동할 수 있습니다. 단축키는 원하는 조합으로 직접 지정하세요.")
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 .padding(16)
