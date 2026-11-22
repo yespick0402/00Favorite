@@ -2992,6 +2992,260 @@ final class FavoriteWindowSnapDrag {
     }
 }
 
+// MARK: - MAGNET-S3A: 창 정렬 전용 macOS 등록형 전역 단축키
+// Finder 휠의 읽기 전용 이벤트 탭 및 잠자기 방지 핫키와는 다른 서명으로 독립 등록합니다.
+// 기본값은 전체 미지정입니다. 사용자가 지정한 조합만 Carbon에 등록합니다.
+final class FavoriteWindowSnapHotKeys: NSObject {
+    static let shared = FavoriteWindowSnapHotKeys()
+    private static let signature: OSType = 0x46575333 // 'FWS3' (Awake의 '00FV'와 구별)
+    private static let storageKey = "favorite_magnet_s3a_shortcuts_v1"
+
+    private struct Binding: Codable {
+        let code: UInt32
+        let modifiers: UInt32
+        let keyLabel: String
+        var label: String {
+            var value = ""
+            if modifiers & UInt32(controlKey) != 0 { value += "⌃" }
+            if modifiers & UInt32(optionKey) != 0 { value += "⌥" }
+            if modifiers & UInt32(shiftKey) != 0 { value += "⇧" }
+            if modifiers & UInt32(cmdKey) != 0 { value += "⌘" }
+            return value + keyLabel
+        }
+    }
+
+    private let layouts: [(FavoriteWindowSnap.Layout, String)] = [
+        (.leftHalf, "왼쪽 절반"), (.rightHalf, "오른쪽 절반"),
+        (.topHalf, "위쪽 절반"), (.bottomHalf, "아래쪽 절반"),
+        (.topLeft, "왼쪽 위"), (.topRight, "오른쪽 위"),
+        (.bottomLeft, "왼쪽 아래"), (.bottomRight, "오른쪽 아래"),
+        (.leftThird, "왼쪽 1/3"), (.middleThird, "가운데 1/3"),
+        (.rightThird, "오른쪽 1/3"), (.leftTwoThirds, "왼쪽 2/3"),
+        (.rightTwoThirds, "오른쪽 2/3"), (.maximize, "최대 크기"),
+        (.center, "가운데 배치"), (.restore, "원래 위치 복원")
+    ]
+    private var bindings: [String: Binding] = [:]
+    private var refs: [Int: EventHotKeyRef] = [:]
+    private var handlerRef: EventHandlerRef?
+    private var active = false
+    private var failedLayouts = Set<Int>()
+    private override init() {
+        super.init()
+        if let saved = UserDefaults.standard.data(forKey: Self.storageKey),
+           let decoded = try? PropertyListDecoder().decode([String: Binding].self, from: saved) {
+            bindings = decoded
+        }
+    }
+
+    private static let callback: EventHandlerUPP = { _, event, _ in
+        guard let event = event else { return OSStatus(eventNotHandledErr) }
+        var identifier = EventHotKeyID()
+        let status = GetEventParameter(
+            event, UInt32(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+            nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier
+        )
+        guard status == noErr, identifier.signature == FavoriteWindowSnapHotKeys.signature,
+              let layout = FavoriteWindowSnap.Layout(rawValue: Int(identifier.id)) else {
+            return OSStatus(eventNotHandledErr)
+        }
+        // 단축키는 원래 활성 앱의 창을 대상으로 합니다. 키/마우스 이벤트를 가로채지 않습니다.
+        DispatchQueue.main.async {
+            guard FavoriteWindowSnap.shared.isEnabled,
+                  let front = NSWorkspace.shared.frontmostApplication,
+                  front.activationPolicy == .regular,
+                  front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            if let error = FavoriteWindowSnap.shared.apply(layout, to: front.processIdentifier) {
+                ToolWindowManager.shared.showBanner(message: "창 정렬: " + error)
+            }
+        }
+        return noErr
+    }
+
+    private func ensureHandler() -> Bool {
+        if handlerRef != nil { return true }
+        var spec = EventTypeSpec(eventClass: UInt32(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        return InstallEventHandler(GetApplicationEventTarget(), Self.callback,
+                                   1, &spec, nil, &handlerRef) == noErr
+    }
+
+    private func register(_ layout: FavoriteWindowSnap.Layout, _ binding: Binding) -> OSStatus {
+        guard ensureHandler() else { return OSStatus(eventNotHandledErr) }
+        var ref: EventHotKeyRef?
+        let identifier = EventHotKeyID(signature: Self.signature, id: UInt32(layout.rawValue))
+        let result = RegisterEventHotKey(binding.code, binding.modifiers, identifier,
+                                         GetApplicationEventTarget(), 0, &ref)
+        if result == noErr, let installed = ref { refs[layout.rawValue] = installed }
+        return result
+    }
+    private func unregisterAll() {
+        for ref in refs.values { _ = UnregisterEventHotKey(ref) }
+        refs.removeAll()
+    }
+    private func persist() {
+        if let saved = try? PropertyListEncoder().encode(bindings) {
+            UserDefaults.standard.set(saved, forKey: Self.storageKey)
+        }
+    }
+    func start() {
+        active = true
+        refresh()
+    }
+    func stop() {
+        active = false
+        unregisterAll()
+        if let ref = handlerRef { _ = RemoveEventHandler(ref); handlerRef = nil }
+    }
+    func refresh() {
+        unregisterAll()
+        failedLayouts.removeAll()
+        guard active, FavoriteWindowSnap.shared.isEnabled else { return }
+        for (layout, _) in layouts {
+            if let binding = bindings[String(layout.rawValue)], register(layout, binding) != noErr {
+                failedLayouts.insert(layout.rawValue)
+            }
+        }
+    }
+    private func label(for layout: FavoriteWindowSnap.Layout) -> String {
+        bindings[String(layout.rawValue)]?.label ?? "미지정"
+    }
+    func menuItem() -> NSMenuItem {
+        let parent = NSMenuItem(title: "⌨️ 창 정렬 전역 단축키", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "창 정렬 전역 단축키")
+        let intro = NSMenuItem(title: "기본 미지정 · 직접 등록 시에만 작동", action: nil, keyEquivalent: "")
+        intro.isEnabled = false
+        submenu.addItem(intro)
+        if !failedLayouts.isEmpty {
+            let warning = NSMenuItem(title: "⚠︎ \(failedLayouts.count)개 단축키 등록 실패 · 다른 앱과 충돌 확인", action: nil, keyEquivalent: "")
+            warning.isEnabled = false
+            submenu.addItem(warning)
+        }
+        submenu.addItem(NSMenuItem.separator())
+        for (layout, name) in layouts {
+            let row = NSMenuItem(title: "\(name) · \(label(for: layout))", action: nil, keyEquivalent: "")
+            let actions = NSMenu(title: name)
+            let edit = NSMenuItem(title: "단축키 직접 지정…", action: #selector(recordShortcut(_:)), keyEquivalent: "")
+            edit.target = self
+            edit.tag = layout.rawValue
+            actions.addItem(edit)
+            let clear = NSMenuItem(title: "이 단축키 해제", action: #selector(clearShortcut(_:)), keyEquivalent: "")
+            clear.target = self
+            clear.tag = layout.rawValue
+            clear.isEnabled = bindings[String(layout.rawValue)] != nil
+            actions.addItem(clear)
+            row.submenu = actions
+            submenu.addItem(row)
+        }
+        submenu.addItem(NSMenuItem.separator())
+        let clearAll = NSMenuItem(title: "모든 창 정렬 단축키 초기화…", action: #selector(clearAllShortcuts), keyEquivalent: "")
+        clearAll.target = self
+        clearAll.isEnabled = !bindings.isEmpty
+        submenu.addItem(clearAll)
+        parent.submenu = submenu
+        parent.isEnabled = FavoriteWindowSnap.shared.isEnabled
+        return parent
+    }
+    private func updateMenu() {
+        (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+    }
+    private func showError(_ message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "창 정렬 단축키를 저장하지 못했습니다"
+        alert.informativeText = message
+        alert.addButton(withTitle: "확인")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+    private func save(_ layout: FavoriteWindowSnap.Layout, binding: Binding?) -> String? {
+        if let new = binding {
+            if bindings.contains(where: { key, value in
+                key != String(layout.rawValue) && value.code == new.code && value.modifiers == new.modifiers
+            }) {
+                return "이미 다른 창 정렬 항목에 지정된 조합입니다."
+            }
+        }
+        let key = String(layout.rawValue)
+        let old = bindings[key]
+        // 같은 키를 다시 지정할 수도 있으므로 이전 등록을 잠깐 해제하고 시도합니다.
+        unregisterAll()
+        if let new = binding {
+            let result = register(layout, new)
+            if result != noErr {
+                refresh() // 성공한 이전 설정을 다시 복구합니다.
+                return "macOS 또는 다른 앱과 단축키가 충돌할 수 있습니다. (코드 \(result))\n기존 단축키는 유지합니다."
+            }
+            bindings[key] = new
+        } else {
+            bindings.removeValue(forKey: key)
+        }
+        persist()
+        refresh()
+        if old == nil && binding == nil { return nil }
+        return nil
+    }
+    @objc private func clearShortcut(_ item: NSMenuItem) {
+        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }
+        if let error = save(layout, binding: nil) { showError(error) }
+        updateMenu()
+    }
+    @objc private func clearAllShortcuts() {
+        let alert = NSAlert()
+        alert.messageText = "모든 창 정렬 단축키를 해제할까요?"
+        alert.informativeText = "Finder 휠과 잠자기 방지 단축키에는 영향을 주지 않습니다."
+        alert.addButton(withTitle: "초기화")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        unregisterAll()
+        bindings.removeAll()
+        persist()
+        refresh()
+        updateMenu()
+    }
+    @objc private func recordShortcut(_ item: NSMenuItem) {
+        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }
+        let name = layouts.first(where: { $0.0 == layout })?.1 ?? "창 정렬"
+        let alert = NSAlert()
+        alert.messageText = "\(name) 단축키 지정"
+        alert.informativeText = "Control/Option/Command/Shift 중 2개 이상과 문자 또는 방향키를 함께 누르세요.\n선택한 조합이 아래에 표시되면 '저장'을 누르세요."
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+        alert.buttons[0].isEnabled = false
+        var selected: Binding?
+        // 녹화 중 기존 Carbon 창 정렬 키와 잠자기 토글이 실행되지 않도록 일시 해제.
+        unregisterAll()
+        FavoriteAwakeHotKey.shared.suspendForRecorder()
+        NSApp.activate(ignoringOtherApps: true)
+        let recorder = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            var modifiers: UInt32 = 0
+            var count = 0
+            if flags.contains(.control) { modifiers |= UInt32(controlKey); count += 1 }
+            if flags.contains(.option) { modifiers |= UInt32(optionKey); count += 1 }
+            if flags.contains(.shift) { modifiers |= UInt32(shiftKey); count += 1 }
+            if flags.contains(.command) { modifiers |= UInt32(cmdKey); count += 1 }
+            // 최소 두 수정키를 요구해 시스템/일반 타이핑과의 충돌을 최소화합니다.
+            guard count >= 2, event.keyCode != 53, event.keyCode != 36 else { return event }
+            let special: [UInt16: String] = [123: "←", 124: "→", 125: "↓", 126: "↑",
+                                            48: "Tab", 49: "Space", 51: "Delete"]
+            let label = special[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "Key\(event.keyCode)"
+            selected = Binding(code: UInt32(event.keyCode), modifiers: modifiers, keyLabel: label)
+            alert.informativeText = "선택한 단축키: \(selected?.label ?? "")\n'저장'을 클릭하면 다른 앱과의 충돌을 검사합니다."
+            alert.buttons[0].isEnabled = true
+            return nil // 앱의 설정창에서만 캡처하며 다른 앱 이벤트는 가로채지 않습니다.
+        }
+        let choice = alert.runModal()
+        if let recorder = recorder { NSEvent.removeMonitor(recorder) }
+        FavoriteAwakeHotKey.shared.resumeAfterRecorder()
+        if choice == .alertFirstButtonReturn, let selected = selected {
+            if let error = save(layout, binding: selected) { showError(error) }
+        }
+        refresh()
+        updateMenu()
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     // MAGNET-S1: 메뉴에서 앞쪽 앱을 선택하기 위한 PID만 저장 (키/마우스 감시 없음)
     private var lastWindowSnapAppPID: pid_t?
@@ -3087,6 +3341,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupUltraLightEventTap()
         // Finder 휠의 읽기 전용 탭과 별도로, macOS에 잠자기 전역 단축키만 등록합니다.
         FavoriteAwakeHotKey.shared.startMonitoring()
+        FavoriteWindowSnapHotKeys.shared.start() // MAGNET-S3A
         updateStatusBarMenu()
         // 메인 메뉴가 준비된 후 1회만 검사합니다. 권한이 이미 정상이라면 아무것도 띄우지 않습니다.
         // 최초 폴더 안내와 겹쳐 두 창이 동시에 열리는 것도 방지합니다.
@@ -3303,6 +3558,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         edgeInfo.isEnabled = false
         submenu.addItem(edgeInfo)
         submenu.addItem(NSMenuItem.separator())
+        submenu.addItem(FavoriteWindowSnapHotKeys.shared.menuItem()) // MAGNET-S3A
+        submenu.addItem(NSMenuItem.separator())
         for line in FavoriteWindowSnapDrag.shared.diagnostics {
             let info = NSMenuItem(title: line, action: nil, keyEquivalent: "")
             info.isEnabled = false
@@ -3319,6 +3576,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let snap = FavoriteWindowSnap.shared
         snap.setEnabled(!snap.isEnabled)
         FavoriteWindowSnapDrag.shared.refreshMonitoring()
+        FavoriteWindowSnapHotKeys.shared.refresh() // MAGNET-S3A
         updateStatusBarMenu()
     }
 
@@ -3506,6 +3764,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         FavoriteWindowSnapDrag.shared.stopMonitoring()
         NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        FavoriteWindowSnapHotKeys.shared.stop() // MAGNET-S3A
         FavoriteAwakeHotKey.shared.stopMonitoring()
         FavoriteAwakeManager.shared.shutdown()
         // 기존 휠 감시와 변환 처리 방식은 변경하지 않습니다.
