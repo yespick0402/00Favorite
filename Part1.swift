@@ -1726,26 +1726,63 @@ class ToolWindowManager {
         activeWindows.append(win)
     }
     
+    // MAGNET-S3C: 긴 알림을 잘리지 않는 가변 높이 배너로 표시합니다.
+    // Finder 파일 드래그/단축키 이벤트에는 개입하지 않는 읽기 전용 알림입니다.
     func showBanner(message: String) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.showBanner(message: message) }
+            return
+        }
         bannerWindow?.close()
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 52), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false; panel.backgroundColor = .clear; panel.level = .statusBar
-        if let screen = NSScreen.main { panel.setFrameOrigin(NSPoint(x: screen.frame.midX - 220, y: screen.frame.maxY - 90)) }
-        panel.contentView = NSHostingView(rootView:
-            HStack(spacing: 10) {
-                if let customIcon = FileProcessor.customAppIconImage() {
-                    Image(nsImage: customIcon).resizable().scaledToFit().frame(width: 24, height: 24)
-                } else {
-                    Image(systemName: "checkmark.circle.fill").foregroundColor(.orange).font(.title2)
-                }
-                Text(message).font(.system(size: 13, weight: .semibold)).foregroundColor(.primary)
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let visible = screen.visibleFrame
+        let bannerWidth = min(CGFloat(760), max(CGFloat(280), visible.width - 32))
+        let content = HStack(alignment: .top, spacing: 10) {
+            if let customIcon = FileProcessor.customAppIconImage() {
+                Image(nsImage: customIcon)
+                    .resizable().scaledToFit().frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 21)).foregroundColor(.orange)
+                    .frame(width: 24, height: 24)
             }
-            .padding(.horizontal, 18).padding(.vertical, 12).background(.regularMaterial, in: Capsule()).shadow(radius: 10)
-        )
-        panel.orderFrontRegardless(); bannerWindow = panel
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) { panel.close() }
+            Text(message)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .frame(width: bannerWidth, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .shadow(radius: 8)
+        let hosting = NSHostingView(rootView: content)
+        // 고정 52pt 높이를 없애고 실제 SwiftUI 텍스트의 줄바꿈 높이를 측정합니다.
+        let bannerHeight = max(CGFloat(56), hosting.fittingSize.height)
+        let panel = NSPanel(
+            contentRect: NSRect(x: visible.midX - bannerWidth / 2,
+                                y: visible.maxY - bannerHeight - 12,
+                                width: bannerWidth, height: bannerHeight),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .statusBar
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+        panel.contentView = hosting
+        panel.orderFrontRegardless()
+        bannerWindow = panel
+        let seconds: TimeInterval = message.count >= 65 ? 6.0 : 3.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self, weak panel] in
+            guard let self = self, let panel = panel,
+                  self.bannerWindow === panel else { return }
+            panel.close()
+            self.bannerWindow = nil
+        }
     }
-    
+
     func showRenameReviewWindow(urls: [URL]) {
         openWindow(title: "촬영일시 근거 확인 후 이름 변경", view: RenameReviewView(files: urls), size: NSSize(width: 860, height: 670), minSize: NSSize(width: 690, height: 520))
     }
