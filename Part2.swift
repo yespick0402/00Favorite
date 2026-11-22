@@ -2570,9 +2570,13 @@ final class FavoriteWindowSnap {
         if err != .success || windowRef == nil {
             err = AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute as CFString, &windowRef)
         }
-        guard err == .success, let window = windowRef as? AXUIElement else {
+        // CoreFoundation의 불투명 타입은 as? 로 검사할 수 없으므로 실제 CFTypeID를 비교합니다.
+        guard err == .success,
+              let rawWindow = windowRef,
+              CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else {
             return "현재 앱에 정렬할 수 있는 창이 없습니다. 창을 한 번 클릭한 뒤 다시 시도해 주세요."
         }
+        let window = rawWindow as! AXUIElement
         AXUIElementSetMessagingTimeout(window, 1.0)
         if let role = stringAttribute(window, name: kAXRoleAttribute as CFString),
            role != (kAXWindowRole as String) {
@@ -2614,8 +2618,12 @@ final class FavoriteWindowSnap {
         var sizeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
               AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let position = positionRef as? AXValue, let size = sizeRef as? AXValue,
-              AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize else { return nil }
+              let rawPosition = positionRef, let rawSize = sizeRef,
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(),
+              CFGetTypeID(rawSize) == AXValueGetTypeID() else { return nil }
+        let position = rawPosition as! AXValue
+        let size = rawSize as! AXValue
+        guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize else { return nil }
         var topLeft = CGPoint.zero
         var dimensions = CGSize.zero
         guard AXValueGetValue(position, .cgPoint, &topLeft),
