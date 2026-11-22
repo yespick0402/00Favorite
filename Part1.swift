@@ -1857,6 +1857,7 @@ struct HelpAndSettingsView: View {
                     Text("🏷️ 이름 변환 양식").tag(1)
                     Text("📖 사용 설명서").tag(2)
                     Text("⚙️ 고급 설정").tag(3)
+                    Text("🧲 창 정렬").tag(4)
                 }.labelsHidden().pickerStyle(.segmented)
             }
             .padding(18).background(.regularMaterial)
@@ -1868,6 +1869,8 @@ struct HelpAndSettingsView: View {
                 renamePatternTab
             } else if selectedTab == 3 {
                 advancedTab
+            } else if selectedTab == 4 {
+                FavoriteMagnetSettingsView()
             } else {
                 usageGuideTab
             }
@@ -1877,15 +1880,21 @@ struct HelpAndSettingsView: View {
                 Text("💡 수천 개의 파일을 한 번에 드래그해도 누락 없이 백그라운드에서 초고속으로 처리됩니다.")
                     .font(.caption).foregroundColor(.secondary)
                 Spacer()
-                Button("기본 설정 복원") {
+                Button(selectedTab == 4 ? "창 정렬 기본 단축키 복원" : "기본 설정 복원") {
                     stopRecording()
-                    settings.resetToFavoriteDefaults()
-                    settings.renamePattern = ShortcutSettings.defaultRenamePattern
-                    _ = FavoriteAwakeHotKey.shared.changePreset(.controlOptionPeriod)
-                    FavoriteAwakeHotKey.shared.setToggleMinutes(60)
-                    awakeMinutes = FavoriteAwakeHotKey.shared.toggleMinutes
-                    (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
-                    FileProcessor.showToast("단축키 및 작동 방식이 기본값으로 복원되었습니다.")
+                    if selectedTab == 4 {
+                        FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()
+                        FavoriteMagnetPreferences.shared.notify()
+                        FileProcessor.showToast("창 정렬 기본 단축키가 복원되었습니다.")
+                    } else {
+                        settings.resetToFavoriteDefaults()
+                        settings.renamePattern = ShortcutSettings.defaultRenamePattern
+                        _ = FavoriteAwakeHotKey.shared.changePreset(.controlOptionPeriod)
+                        FavoriteAwakeHotKey.shared.setToggleMinutes(60)
+                        awakeMinutes = FavoriteAwakeHotKey.shared.toggleMinutes
+                        (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+                        FileProcessor.showToast("단축키 및 작동 방식이 기본값으로 복원되었습니다.")
+                    }
                 }
                 Button("닫기") { stopRecording(); stopAwakeRecording(); NSApp.keyWindow?.close() }
                     .buttonStyle(.borderedProminent).tint(.orange)
@@ -1900,7 +1909,7 @@ struct HelpAndSettingsView: View {
              refreshLaunchAtLoginStatus()
          }
          .onReceive(NotificationCenter.default.publisher(for: ToolWindowManager.settingsNavigation)) { note in
-             if let newTab = note.userInfo?["tab"] as? Int, (0...3).contains(newTab) {
+             if let newTab = note.userInfo?["tab"] as? Int, (0...4).contains(newTab) {
                  selectedTab = newTab
              }
          }
