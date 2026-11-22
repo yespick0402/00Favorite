@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3A
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3B
 
 jobs:
   build:
@@ -26,9 +26,10 @@ jobs:
           set -euo pipefail
           test -s Part1.swift || { echo 'ERROR: Part1.swift 없음'; exit 1; }
           test -s Part2.swift || { echo 'ERROR: Part2.swift 없음'; exit 1; }
+          test -s MagnetSettings.swift || { echo 'ERROR: MagnetSettings.swift 없음'; exit 1; }
           test -s icon.png || { echo 'ERROR: icon.png 없음'; exit 1; }
           test -s icon_awake.png || { echo 'ERROR: icon_awake.png 없음'; exit 1; }
-          cat Part1.swift Part2.swift > combined_main.swift
+          cat Part1.swift Part2.swift MagnetSettings.swift > combined_main.swift
           # Swift 구문 검사로는 SDK 이름 변경 오류를 검출할 수 없으므로 구형 상수를 차단합니다.
           if grep -nF 'kCFRunLoopCommonModes' combined_main.swift; then
             echo 'ERROR: 구형 CoreFoundation 상수. CFRunLoopMode.commonModes를 사용하세요.' >&2
@@ -99,7 +100,7 @@ jobs:
               'FavoriteWindowSnapHotKeys.shared.start()',
               'FavoriteWindowSnapHotKeys.shared.stop()',
               'FavoriteWindowSnapHotKeys.shared.refresh()',
-              'FavoriteWindowSnapHotKeys.shared.menuItem()',
+              'FavoriteWindowSnapHotKeys.shared.recordInSettings(',
               'FavoriteAwakeHotKey.shared.suspendForRecorder()',
               'FavoriteAwakeHotKey.shared.resumeAfterRecorder()',
               'favorite_magnet_s3a_shortcuts_v1',
@@ -107,7 +108,19 @@ jobs:
           missing = [item for item in required if item not in src]
           if missing: raise SystemExit('ERROR: MAGNET-S3A incomplete: ' + ', '.join(missing))
           assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder wheel event tap count changed'
-          print('MAGNET-S3A Carbon hotkeys / Finder isolation: VERIFIED')
+          required_settings = [
+              'FavoriteMagnetSettingsView()', 'final class FavoriteMagnetPreferences',
+              'favorite_magnet_settings_drag_areas_v1',
+              'FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()',
+              'FavoriteMagnetPreferences.shared.layoutForEdge(',
+              'case maximize, center, restore, centerTwoThirds',
+              '36: "↩"', 'event.keyCode != 53 else',
+              '창 정렬 설정…'
+          ]
+          combined = Path('combined_main.swift').read_text()
+          missing_settings = [x for x in required_settings if x not in combined]
+          if missing_settings: raise SystemExit('ERROR: MAGNET-S3B incomplete: ' + ', '.join(missing_settings))
+          print('MAGNET-S3B Korean settings / Enter shortcut / drag area: VERIFIED')
           PY_MAGNET_S3A
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
           # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
