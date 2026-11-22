@@ -12,6 +12,7 @@ import AudioToolbox
 import ImageIO
 import IOKit.pwr_mgt
 import IOKit.ps
+import ServiceManagement
 
 // HK8: 기존 MyTangerine의 설정을 새 00Favorite 식별자로 한 번만 복사합니다.
 // 접근 권한(TCC)은 복사할 수 없으며 사용자가 새 앱에 직접 허용해야 합니다.
@@ -46,6 +47,43 @@ enum FavoritePreferencesMigration {
             }
         }
         current.set(true, forKey: completedKey)
+    }
+}
+
+
+// LOGIN1: macOS 13+ 공식 로그인 항목 API. 별도 실행 도우미나 LaunchAgent를 만들지 않습니다.
+// 등록 상태는 UserDefaults 추정값이 아니라 매번 macOS의 실제 상태를 읽습니다.
+enum FavoriteLaunchAtLogin {
+    static var status: SMAppService.Status { SMAppService.mainApp.status }
+    static var isRegistered: Bool { status == .enabled || status == .requiresApproval }
+    static var needsApproval: Bool { status == .requiresApproval }
+
+    static var statusDescription: String {
+        switch status {
+        case .enabled: return "활성화됨 · 다음 로그인부터 자동 실행"
+        case .requiresApproval: return "시스템 설정에서 승인 필요"
+        case .notRegistered: return "꺼짐"
+        case .notFound: return "등록 상태를 확인할 수 없음"
+        @unknown default: return "알 수 없는 상태"
+        }
+    }
+
+    static func setRegistered(_ enabled: Bool) throws {
+        let service = SMAppService.mainApp
+        if enabled {
+            // 중복 등록을 피합니다. 승인 대기 상태는 재등록이 아니라 시스템 설정에서 처리합니다.
+            if service.status == .enabled || service.status == .requiresApproval { return }
+            try service.register()
+        } else {
+            if service.status == .notRegistered { return }
+            try service.unregister()
+        }
+    }
+
+    static func openSystemSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
@@ -1786,6 +1824,9 @@ struct HelpAndSettingsView: View {
     @State private var awakeKeyName: String = ""
     @State private var awakeKeyFlags: NSEvent.ModifierFlags = []
     @State private var awakeKeyMonitor: Any? = nil
+    @State private var launchAtLoginRegistered: Bool = FavoriteLaunchAtLogin.isRegistered
+    @State private var launchAtLoginStatus: String = FavoriteLaunchAtLogin.statusDescription
+    @State private var launchAtLoginNotice: String = ""
     @State private var wheelMonitorStatus = "확인 전"
     @State private var wheelRecentDiagnostic = "아직 파일 드래그 시도 없음"
     
@@ -1850,7 +1891,14 @@ struct HelpAndSettingsView: View {
                     .buttonStyle(.borderedProminent).tint(.orange)
             }
             .padding(14).background(.regularMaterial)
-        }.onAppear { refreshWheelMonitorStatus() }
+        }.onAppear {
+             refreshWheelMonitorStatus()
+             refreshLaunchAtLoginStatus()
+         }
+         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+             // 사용자가 시스템 설정에서 로그인 항목 승인을 변경했으면 즉시 반영합니다.
+             refreshLaunchAtLoginStatus()
+         }
          .onReceive(NotificationCenter.default.publisher(for: ToolWindowManager.settingsNavigation)) { note in
              if let newTab = note.userInfo?["tab"] as? Int, (0...3).contains(newTab) {
                  selectedTab = newTab
@@ -1867,6 +1915,11 @@ struct HelpAndSettingsView: View {
          .onDisappear { stopRecording(); stopAwakeRecording() }
     }
     
+    private func refreshLaunchAtLoginStatus() {
+        launchAtLoginRegistered = FavoriteLaunchAtLogin.isRegistered
+        launchAtLoginStatus = FavoriteLaunchAtLogin.statusDescription
+    }
+
     // 사용자에게는 필요할 때만 표시하는 입력 감시·폴더 접근 관리 화면.
     var advancedTab: some View {
         ScrollView {
@@ -1874,6 +1927,39 @@ struct HelpAndSettingsView: View {
                 Text("고급 설정").font(.title3.bold()).foregroundColor(.orange)
                 Text("평상시에는 변경하지 않아도 됩니다. 휠 안전 모드는 기본 적용되며, 문제가 있을 때만 진단·재연결을 사용하세요.")
                     .font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 9) {
+                    Label("시작프로그램", systemImage: "power")
+                        .font(.headline).foregroundColor(.orange)
+                    Toggle("Mac 로그인 시 00Favorite 자동 실행", isOn: Binding(
+                        get: { launchAtLoginRegistered },
+                        set: { newValue in
+                            do {
+                                try FavoriteLaunchAtLogin.setRegistered(newValue)
+                                launchAtLoginNotice = ""
+                            } catch {
+                                launchAtLoginNotice = "설정 변경 실패: \(error.localizedDescription)"
+                            }
+                            refreshLaunchAtLoginStatus()
+                            (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+                        }
+                    ))
+                    Text("현재 상태: \(launchAtLoginStatus)")
+                        .font(.caption).foregroundColor(.secondary)
+                    if FavoriteLaunchAtLogin.needsApproval {
+                        Text("macOS의 로그인을 위한 추가 승인이 필요합니다. 아래 버튼으로 시스템 설정에서 00Favorite을 허용해 주세요.")
+                            .font(.caption).foregroundColor(.orange)
+                    }
+                    if !launchAtLoginNotice.isEmpty {
+                        Text(launchAtLoginNotice).font(.caption).foregroundColor(.red)
+                    }
+                    HStack(spacing: 10) {
+                        Button("로그인 항목 시스템 설정") { FavoriteLaunchAtLogin.openSystemSettings() }
+                        Button("상태 새로고침") { refreshLaunchAtLoginStatus() }
+                    }
+                    Text("기본값은 꺼짐입니다. 켜면 다음 Mac 로그인부터 메뉴바에 00Favorite이 자동으로 실행됩니다. 잠자기 방지는 자동으로 켜지지 않습니다.")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+                .padding(14).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 9) {
                     Label("안전 모드 (항상 적용)", systemImage: "shield.checkered")
                         .font(.headline).foregroundColor(.green)

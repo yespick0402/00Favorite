@@ -2532,7 +2532,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let path = Bundle.main.path(forResource: "icon_awake", ofType: "png") else { return nil }
         return NSImage(contentsOfFile: path)
     }()
-    private let buildIdentifier = "FAV-20261121-HK13"
+    // Info.plist의 단일 빌드 식별자를 표시해 워크플로 식별자와 차이가 나지 않게 합니다.
+    private var buildIdentifier: String {
+        Bundle.main.object(forInfoDictionaryKey: "FavoriteBuildID") as? String ?? "00Favorite 4.8"
+    }
     var wheelPanel: NSPanel?
     var wheelCenterPoint: NSPoint = .zero
     
@@ -2726,6 +2729,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let helpItem = NSMenuItem(title: "⚙️ 설명 및 설정…", action: #selector(openHelpAndSettings), keyEquivalent: ",")
         helpItem.target = self
         menu.addItem(helpItem)
+        let loginItem = NSMenuItem(title: "Mac 로그인 시 00Favorite 자동 실행", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = FavoriteLaunchAtLogin.isRegistered ? .on : .off
+        menu.addItem(loginItem)
+        if FavoriteLaunchAtLogin.needsApproval {
+            let pending = NSMenuItem(title: "⚠︎ 로그인 항목 승인 필요 · 시스템 설정 열기…", action: #selector(openLoginItemSettings), keyEquivalent: "")
+            pending.target = self
+            menu.addItem(pending)
+        }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "종료 (Quit)", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -2883,6 +2895,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         FavoriteAwakeHotKey.shared.stopMonitoring()
         FavoriteAwakeManager.shared.shutdown()
         // 기존 휠 감시와 변환 처리 방식은 변경하지 않습니다.
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            try FavoriteLaunchAtLogin.setRegistered(!FavoriteLaunchAtLogin.isRegistered)
+            if FavoriteLaunchAtLogin.needsApproval {
+                let alert = NSAlert()
+                alert.alertStyle = .informational
+                alert.messageText = "00Favorite 로그인 항목 승인 필요"
+                alert.informativeText = "시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램에서 00Favorite을 허용해 주세요. 승인 전에는 자동 실행되지 않습니다."
+                alert.addButton(withTitle: "시스템 설정 열기")
+                alert.addButton(withTitle: "나중에")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    FavoriteLaunchAtLogin.openSystemSettings()
+                }
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "로그인 시 자동 실행을 변경하지 못했습니다"
+            alert.informativeText = error.localizedDescription + "\n앱이 /Applications/00Favorite.app에 설치되었는지 확인해 주세요."
+            alert.runModal()
+        }
+        updateStatusBarMenu()
+    }
+
+    @objc private func openLoginItemSettings() {
+        FavoriteLaunchAtLogin.openSystemSettings()
     }
 
     @objc func openHelpAndSettings() { ToolWindowManager.shared.showHelpAndSettingsWindow() }
