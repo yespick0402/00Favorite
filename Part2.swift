@@ -2526,7 +2526,177 @@ final class FavoriteAwakeHotKey {
     }
 }
 
+// MARK: - MAGNET-S1: 메뉴에서 실행하는 창 정렬 (전역 키/드래그 감시 추가 없음)
+// macOS 접근성(AX) API만 사용합니다. 파일 드래그 휠과 Owly형 잠자기 단축키는 변경하지 않습니다.
+final class FavoriteWindowSnap {
+    static let shared = FavoriteWindowSnap()
+
+    enum Layout: Int {
+        case leftHalf = 1, rightHalf, topHalf, bottomHalf
+        case topLeft, topRight, bottomLeft, bottomRight
+        case leftThird, middleThird, rightThird, leftTwoThirds, rightTwoThirds
+        case maximize, center, restore
+    }
+
+    private struct OriginalWindow {
+        let window: AXUIElement
+        let frame: CGRect
+    }
+
+    private let settingKey = "favorite_magnet_stage1_enabled_v1"
+    private var originals: [pid_t: [OriginalWindow]] = [:]
+
+    var isEnabled: Bool { UserDefaults.standard.bool(forKey: settingKey) }
+
+    func setEnabled(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: settingKey)
+    }
+
+    // Finder/Chrome 등 앞쪽 앱의 포커스된 표준 창만 대상으로 삼습니다.
+    // 반환값 nil은 성공, 문자열은 사용자에게 표시할 실패 사유입니다.
+    func apply(_ layout: Layout, to processID: pid_t?) -> String? {
+        guard isEnabled else { return "창 정렬이 꺼져 있습니다. 메뉴에서 먼저 켜 주세요." }
+        guard AXIsProcessTrusted() else {
+            return "창 정렬에는 macOS의 '기기 제어 및 데이터 접근(손쉬운 사용)' 승인이 필요합니다.\n시스템 설정에서 00Favorite을 허용한 뒤 다시 실행해 주세요."
+        }
+        guard let pid = processID, pid > 0, pid != ProcessInfo.processInfo.processIdentifier else {
+            return "정렬할 앱을 찾지 못했습니다. Finder나 Chrome 등에서 창을 선택한 뒤 다시 시도해 주세요."
+        }
+
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 1.0)
+        var windowRef: CFTypeRef?
+        var err = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &windowRef)
+        if err != .success || windowRef == nil {
+            err = AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute as CFString, &windowRef)
+        }
+        guard err == .success, let window = windowRef as? AXUIElement else {
+            return "현재 앱에 정렬할 수 있는 창이 없습니다. 창을 한 번 클릭한 뒤 다시 시도해 주세요."
+        }
+        AXUIElementSetMessagingTimeout(window, 1.0)
+        if let role = stringAttribute(window, name: kAXRoleAttribute as CFString),
+           role != (kAXWindowRole as String) {
+            return "선택한 대상은 일반 창이 아닙니다."
+        }
+        if let subrole = stringAttribute(window, name: kAXSubroleAttribute as CFString),
+           subrole != (kAXStandardWindowSubrole as String) {
+            return "시스템 창·대화상자·특수 창은 안전을 위해 정렬하지 않습니다."
+        }
+
+        guard let current = readFrame(window) else {
+            return "창 위치와 크기를 읽지 못했습니다. 일부 앱의 특수 창은 지원하지 않습니다."
+        }
+        let key = originals[pid]?.firstIndex(where: { CFEqual($0.window, window) })
+
+        if layout == .restore {
+            guard let index = key, let original = originals[pid]?[index] else {
+                return "이 창에서 00Favorite으로 정렬한 기록이 없어 복원할 위치가 없습니다."
+            }
+            if let error = setFrame(original.frame, for: window) { return error }
+            originals[pid]?.remove(at: index)
+            return nil
+        }
+
+        guard let screen = screenContaining(current) else { return "창을 표시할 모니터를 찾지 못했습니다." }
+        let target = layoutFrame(layout, visible: screen.visibleFrame, current: current)
+        if key == nil { originals[pid, default: []].append(OriginalWindow(window: window, frame: current)) }
+        return setFrame(target, for: window)
+    }
+
+    private func stringAttribute(_ element: AXUIElement, name: CFString) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private func readFrame(_ element: AXUIElement) -> CGRect? {
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let position = positionRef as? AXValue, let size = sizeRef as? AXValue,
+              AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize else { return nil }
+        var topLeft = CGPoint.zero
+        var dimensions = CGSize.zero
+        guard AXValueGetValue(position, .cgPoint, &topLeft),
+              AXValueGetValue(size, .cgSize, &dimensions) else { return nil }
+        // AX의 y 좌표는 기본 디스플레이의 위쪽이 0입니다. Cocoa는 아래쪽이 0입니다.
+        let mainTop = primaryScreenTop
+        return CGRect(x: topLeft.x, y: mainTop - topLeft.y - dimensions.height,
+                      width: dimensions.width, height: dimensions.height)
+    }
+
+    private func setFrame(_ cocoaRect: CGRect, for window: AXUIElement) -> String? {
+        let rect = cocoaRect.integral
+        var size = rect.size
+        var pos = CGPoint(x: rect.minX, y: primaryScreenTop - rect.maxY)
+        guard let sizeValue = AXValueCreate(.cgSize, &size),
+              let pointValue = AXValueCreate(.cgPoint, &pos) else { return "창 정렬 위치를 계산하지 못했습니다." }
+        // 크기를 먼저 정하고 위치를 두 번 지정하여 앱별 최소 크기 보정에 대응합니다.
+        let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+        let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+        if sizeResult != .success || positionResult != .success {
+            return "이 창은 크기 또는 위치 변경을 허용하지 않습니다. (크기: \(sizeResult.rawValue), 위치: \(positionResult.rawValue))"
+        }
+        _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+        if let actual = readFrame(window),
+           abs(actual.width - rect.width) > 24 || abs(actual.height - rect.height) > 24 {
+            return "창이 지원하는 최소/최대 크기 제한으로 요청한 크기와 다르게 배치됐습니다."
+        }
+        return nil
+    }
+
+    private var primaryScreenTop: CGFloat {
+        let mainDisplay = CGMainDisplayID()
+        let primary = NSScreen.screens.first(where: { screen in
+            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == mainDisplay
+        })
+        return (primary ?? NSScreen.screens.first)?.frame.maxY ?? 0
+    }
+
+    private func screenContaining(_ rect: CGRect) -> NSScreen? {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) { return screen }
+        // 화면 밖에 걸친 창은 가장 많이 겹치는 모니터를 사용합니다.
+        return NSScreen.screens.max(by: { a, b in
+            let intersectionA = a.frame.intersection(rect)
+            let intersectionB = b.frame.intersection(rect)
+            let areaA = intersectionA.isNull ? 0 : intersectionA.width * intersectionA.height
+            let areaB = intersectionB.isNull ? 0 : intersectionB.width * intersectionB.height
+            return areaA < areaB
+        })
+    }
+
+    private func layoutFrame(_ layout: Layout, visible v: CGRect, current c: CGRect) -> CGRect {
+        let w = v.width, h = v.height
+        let halfW = floor(w / 2), halfH = floor(h / 2), thirdW = floor(w / 3)
+        switch layout {
+        case .leftHalf:       return CGRect(x: v.minX, y: v.minY, width: halfW, height: h)
+        case .rightHalf:      return CGRect(x: v.minX + halfW, y: v.minY, width: w - halfW, height: h)
+        case .topHalf:        return CGRect(x: v.minX, y: v.minY + halfH, width: w, height: h - halfH)
+        case .bottomHalf:     return CGRect(x: v.minX, y: v.minY, width: w, height: halfH)
+        case .topLeft:       return CGRect(x: v.minX, y: v.minY + halfH, width: halfW, height: h - halfH)
+        case .topRight:      return CGRect(x: v.minX + halfW, y: v.minY + halfH, width: w - halfW, height: h - halfH)
+        case .bottomLeft:    return CGRect(x: v.minX, y: v.minY, width: halfW, height: halfH)
+        case .bottomRight:   return CGRect(x: v.minX + halfW, y: v.minY, width: w - halfW, height: halfH)
+        case .leftThird:     return CGRect(x: v.minX, y: v.minY, width: thirdW, height: h)
+        case .middleThird:   return CGRect(x: v.minX + thirdW, y: v.minY, width: thirdW, height: h)
+        case .rightThird:    return CGRect(x: v.minX + 2 * thirdW, y: v.minY, width: w - 2 * thirdW, height: h)
+        case .leftTwoThirds: return CGRect(x: v.minX, y: v.minY, width: 2 * thirdW, height: h)
+        case .rightTwoThirds:return CGRect(x: v.minX + thirdW, y: v.minY, width: w - thirdW, height: h)
+        case .maximize:      return v
+        case .center:
+            let size = CGSize(width: min(c.width, w), height: min(c.height, h))
+            return CGRect(x: v.midX - size.width / 2, y: v.midY - size.height / 2, width: size.width, height: size.height)
+        case .restore:       return c
+        }
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
+    // MAGNET-S1: 메뉴에서 앞쪽 앱을 선택하기 위한 PID만 저장 (키/마우스 감시 없음)
+    private var lastWindowSnapAppPID: pid_t?
+
     var statusItem: NSStatusItem!
     private lazy var awakeCakeIcon: NSImage? = {
         guard let path = Bundle.main.path(forResource: "icon_awake", ofType: "png") else { return nil }
@@ -2583,6 +2753,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 실행만으로 광범위한 손쉬운 사용 권한을 요청하지 않습니다.
         // Finder 휠은 읽기 전용 입력 감시를 사용하므로 입력 모니터링을 우선 검사합니다.
         // (macOS 27.2의 '기기 제어 및 데이터 접근'은 기존 손쉬운 사용 권한의 UI 명칭입니다.)
+
+        // 현재 앱이 아닌 다른 앱의 창을 대상으로 메뉴 정렬합니다.
+        // 포커스 전환 알림만 사용하며 이벤트 탭은 추가하지 않습니다.
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            lastWindowSnapAppPID = front.processIdentifier
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(rememberLastWindowSnapApp(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
 
         FavoritePreferencesMigration.runOnce()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -2724,6 +2904,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(makeWindowSnapMenu())
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(makeAwakeMenu())
         menu.addItem(NSMenuItem.separator())
         let helpItem = NSMenuItem(title: "⚙️ 설명 및 설정…", action: #selector(openHelpAndSettings), keyEquivalent: ",")
@@ -2742,6 +2924,109 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "종료 (Quit)", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
     }
+    // MARK: MAGNET-S1 메뉴와 대상 앱 추적
+    @objc private func rememberLastWindowSnapApp(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              app.activationPolicy == .regular else { return }
+        lastWindowSnapAppPID = app.processIdentifier
+    }
+
+    private func preferredWindowSnapPID() -> pid_t? {
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+           front.activationPolicy == .regular {
+            lastWindowSnapAppPID = front.processIdentifier
+            return front.processIdentifier
+        }
+        if let pid = lastWindowSnapAppPID,
+           NSWorkspace.shared.runningApplications.contains(where: { $0.processIdentifier == pid && !$0.isTerminated }) {
+            return pid
+        }
+        return nil
+    }
+
+    private func makeWindowSnapMenu() -> NSMenuItem {
+        let snap = FavoriteWindowSnap.shared
+        let parent = NSMenuItem(title: "🧲 창 정렬 · \(snap.isEnabled ? "ON" : "OFF")", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "창 정렬")
+        let switchItem = NSMenuItem(title: "창 정렬 사용하기", action: #selector(toggleWindowSnapEnabled), keyEquivalent: "")
+        switchItem.target = self
+        switchItem.state = snap.isEnabled ? .on : .off
+        submenu.addItem(switchItem)
+        submenu.addItem(NSMenuItem.separator())
+        let groups: [(String, [(String, FavoriteWindowSnap.Layout)])] = [
+            ("2분할", [
+                ("왼쪽 절반", .leftHalf), ("오른쪽 절반", .rightHalf),
+                ("위쪽 절반", .topHalf), ("아래쪽 절반", .bottomHalf)
+            ]),
+            ("4분할", [
+                ("왼쪽 위", .topLeft), ("오른쪽 위", .topRight),
+                ("왼쪽 아래", .bottomLeft), ("오른쪽 아래", .bottomRight)
+            ]),
+            ("3분할 · 2/3", [
+                ("왼쪽 1/3", .leftThird), ("가운데 1/3", .middleThird),
+                ("오른쪽 1/3", .rightThird),
+                ("왼쪽 2/3", .leftTwoThirds), ("오른쪽 2/3", .rightTwoThirds)
+            ]),
+            ("기타", [
+                ("화면에 최대한 크게 (전체 화면 모드 아님)", .maximize),
+                ("화면 가운데 배치", .center),
+                ("원래 위치·크기로 복원", .restore)
+            ])
+        ]
+        for (title, options) in groups {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let child = NSMenu(title: title)
+            for (label, layout) in options {
+                let entry = NSMenuItem(title: label, action: #selector(applyWindowSnap(_:)), keyEquivalent: "")
+                entry.target = self
+                entry.tag = layout.rawValue
+                entry.isEnabled = snap.isEnabled
+                child.addItem(entry)
+            }
+            item.submenu = child
+            item.isEnabled = snap.isEnabled
+            submenu.addItem(item)
+        }
+        submenu.addItem(NSMenuItem.separator())
+        let help = NSMenuItem(title: "선택한 앱의 창 정렬 · 손쉬운 사용 권한 필요", action: nil, keyEquivalent: "")
+        help.isEnabled = false
+        submenu.addItem(help)
+        let next = NSMenuItem(title: "화면 가장자리 드래그 정렬은 2단계에서 추가", action: nil, keyEquivalent: "")
+        next.isEnabled = false
+        submenu.addItem(next)
+        parent.submenu = submenu
+        return parent
+    }
+
+    @objc private func toggleWindowSnapEnabled() {
+        let snap = FavoriteWindowSnap.shared
+        snap.setEnabled(!snap.isEnabled)
+        updateStatusBarMenu()
+    }
+
+    @objc private func applyWindowSnap(_ item: NSMenuItem) {
+        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }
+        if let error = FavoriteWindowSnap.shared.apply(layout, to: preferredWindowSnapPID()) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "00Favorite 창 정렬"
+            alert.informativeText = error
+            if !AXIsProcessTrusted() {
+                alert.addButton(withTitle: "권한 설정 열기")
+                alert.addButton(withTitle: "취소")
+                if alert.runModal() == .alertFirstButtonReturn,
+                   let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            } else {
+                alert.addButton(withTitle: "확인")
+                alert.runModal()
+            }
+        }
+    }
+
     // MARK: 독립 잠자기 방지 메뉴 (작업 진행률·변환 이벤트와 무관)
     private func makeAwakeMenu() -> NSMenuItem {
         let awake = FavoriteAwakeManager.shared
@@ -2892,6 +3177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didActivateApplicationNotification, object: nil)
         FavoriteAwakeHotKey.shared.stopMonitoring()
         FavoriteAwakeManager.shared.shutdown()
         // 기존 휠 감시와 변환 처리 방식은 변경하지 않습니다.
