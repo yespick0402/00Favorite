@@ -7,7 +7,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S1R1
+  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S2
 
 jobs:
   build:
@@ -61,7 +61,7 @@ jobs:
           grep -q 'SMAppService.mainApp' Part1.swift || { echo 'ERROR: 로그인 항목 등록 API 누락'; exit 1; }
           grep -q 'Mac 로그인 시 00Favorite 자동 실행' Part1.swift || { echo 'ERROR: 로그인 자동 실행 설정 UI 누락'; exit 1; }
           grep -q '#selector(toggleLaunchAtLogin)' Part2.swift || { echo 'ERROR: 로그인 항목 메뉴 누락'; exit 1; }
-          # MAGNET-S1: 메뉴 기반 AX 창 정렬만 추가 (전역 이벤트 감시 및 핫키 수정 금지).
+          # MAGNET-S2: 기존 AX 메뉴 정렬 + 독립 읽기 전용 창 드래그 감시.
           python3 - <<'PY_WINDOW_SNAP'
           from pathlib import Path
           src = Path('Part2.swift').read_text()
@@ -74,7 +74,13 @@ jobs:
           missing = [item for item in required if item not in src]
           if missing: raise SystemExit('ERROR: MAGNET-S1 source incomplete: ' + ', '.join(missing))
           assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: extra event tap introduced'
-          print('MAGNET-S1 menu / AX movement / wheel isolation: VERIFIED')
+          assert 'final class FavoriteWindowSnapDrag' in src, 'ERROR: MAGNET-S2 passive drag module missing'
+          assert 'NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp])' in src, 'ERROR: passive mouse monitor missing'
+          assert 'panel.ignoresMouseEvents = true' in src, 'ERROR: preview must be click-through'
+          assert 'actuallyMovedWindow' in src, 'ERROR: window-movement safety guard missing'
+          assert 'candidateForTitlebarDrag(at:' in src, 'ERROR: titlebar hit test missing'
+          assert '#selector(toggleWindowSnapDragEnabled)' in src, 'ERROR: menu toggle missing'
+          print('MAGNET-S2 passive mouse drag / overlay / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
           # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
@@ -134,7 +140,7 @@ jobs:
             <key>CFBundleIconFile</key><string>AppIcon</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>4.8</string>
-            <key>CFBundleVersion</key><string>4818</string>
+            <key>CFBundleVersion</key><string>4819</string>
             <key>FavoriteBuildID</key><string>${FAVORITE_BUILD_ID}</string>
             <key>LSMinimumSystemVersion</key><string>14.0</string>
             <key>LSArchitecturePriority</key><array><string>arm64</string></array>
@@ -342,6 +348,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-HK13-LOGIN1-Mac-ARM64
+          name: 00Favorite-4.8-HK13-MAGNET-S2-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
