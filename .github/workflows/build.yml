@@ -7,7 +7,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S2
+  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S2R1
 
 jobs:
   build:
@@ -79,6 +79,8 @@ jobs:
           assert 'panel.ignoresMouseEvents = true' in src, 'ERROR: preview must be click-through'
           assert 'actuallyMovedWindow' in src, 'ERROR: window-movement safety guard missing'
           assert 'candidateForTitlebarDrag(at:' in src, 'ERROR: titlebar hit test missing'
+          assert '드래그 진단 초기화' in src, 'ERROR: drag diagnostic menu missing'
+          assert '드래그 중 창 후보 복구' in src, 'ERROR: mouse-down miss recovery missing'
           assert '#selector(toggleWindowSnapDragEnabled)' in src, 'ERROR: menu toggle missing'
           print('MAGNET-S2 passive mouse drag / overlay / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
