@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3B
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C
 
 jobs:
   build:
@@ -122,6 +122,41 @@ jobs:
           if missing_settings: raise SystemExit('ERROR: MAGNET-S3B incomplete: ' + ', '.join(missing_settings))
           print('MAGNET-S3B Korean settings / Enter shortcut / drag area: VERIFIED')
           PY_MAGNET_S3A
+          # MAGNET-S3C: multiline-safe banner and multi-display navigation must remain independent.
+          python3 - <<'PY_MAGNET_S3C'
+          from pathlib import Path
+          source1 = Path('Part1.swift').read_text()
+          source2 = Path('Part2.swift').read_text()
+          pref = Path('MagnetSettings.swift').read_text()
+          banner = [
+              'func showBanner(message: String)', 'hosting.fittingSize.height',
+              'fixedSize(horizontal: false, vertical: true)',
+              'panel.ignoresMouseEvents = true', 'self.bannerWindow === panel',
+          ]
+          screen = [
+              'case maximize, center, restore, centerTwoThirds, nextDisplay, previousDisplay',
+              'private func adjacentDisplay(from current: NSScreen, forward: Bool)',
+              'private func mappedFrame(_ current: CGRect, from source: CGRect, to dest: CGRect)',
+              'layout == .nextDisplay || layout == .previousDisplay',
+              'NSScreen.screens.count > 1',
+              '("다음 디스플레이", .nextDisplay)',
+              '("이전 디스플레이", .previousDisplay)',
+          ]
+          ui = [
+              '("디스플레이 이동", [(.nextDisplay, "다음 디스플레이")',
+              'case .nextDisplay, .previousDisplay:',
+              '연결된 디스플레이:',
+          ]
+          for group, source, needles in [
+              ('banner', source1, banner), ('display', source2, screen),
+              ('settings', pref, ui),
+          ]:
+              missing = [needle for needle in needles if needle not in source]
+              if missing: raise SystemExit(f'ERROR: MAGNET-S3C {group} incomplete: {missing}')
+          assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: second Finder event tap introduced'
+          assert 'guard movedWindow else { return }' in source2, 'ERROR: titlebar movement safety removed'
+          print('MAGNET-S3C adaptive banners / next & previous displays / Finder isolation: VERIFIED')
+          PY_MAGNET_S3C
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
           # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
           python3 - <<'PY_AX_CAST'
@@ -388,6 +423,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-HK13-MAGNET-S3B-Mac-ARM64
+          name: 00Favorite-4.8-HK13-MAGNET-S3C-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
