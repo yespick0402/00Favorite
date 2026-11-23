@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C-UI2-FIX1-MAINT1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C-UI2-FIX1-MAINT1-FIX1
 
 jobs:
   build:
@@ -213,6 +213,14 @@ jobs:
               raise SystemExit('ERROR: MAINT1 forbidden unsafe operation: ' + ', '.join(unsafe))
           assert 'FavoriteSetupCleanupView()' in first
           assert first.count('CGEvent.tapCreate(') == 0
+          # MAINT1-FIX1: the maintenance sheet must have a real, always-visible close action.
+          assert '@Environment(\\.dismiss) private var dismiss' in source, 'ERROR: sheet dismiss environment missing'
+          assert 'Button("닫기") { dismiss() }' in source, 'ERROR: Korean close button missing'
+          assert '.keyboardShortcut(.cancelAction)' in source, 'ERROR: Escape close shortcut missing'
+          assert '.accessibilityLabel("설치·삭제 관리 닫기")' in source, 'ERROR: accessible close action missing'
+          assert source.index('Button("닫기") { dismiss() }') < source.index('ScrollView {'), 'ERROR: close must remain outside scroll'
+          assert 'process.arguments = ["reset", "All", expectedBundleID]' in source, 'ERROR: app-specific privacy reset altered'
+          print('MAINT1-FIX1 persistent close button / Escape / permission isolation: VERIFIED')
           print('MAINT1 targeted consent/reset, safe confirmation and setup sheet: VERIFIED')
           PY_FAVORITE_MAINT1
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
@@ -481,6 +489,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-MAGNET-S3C-UI2-FIX1-MAINT1-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3C-UI2-FIX1-MAINT1-FIX1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
