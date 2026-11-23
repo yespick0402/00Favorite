@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C-UI2-FIX1-MAINT1-FIX1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3D-MAINT1-FIX1
 
 jobs:
   build:
@@ -180,6 +180,21 @@ jobs:
           assert '.shadow(radius:' not in banner_code, 'ERROR: clipped toast shadow reintroduced'
           assert '.background(.regularMaterial' not in banner_code, 'ERROR: translucent corner artifacts reintroduced'
           print('MAGNET-S3C UI1/FIX1 text-fit bottom banner / right-origin maximize: VERIFIED')
+          # S3-D: global display navigation defaults retain existing hotkeys and never change Finder tap.
+          hotkeys = source2.split('final class FavoriteWindowSnapHotKeys:', 1)[1]
+          required_display = [
+              '(.nextDisplay, Binding(code: 124, modifiers: three, keyLabel: "→"))',
+              '(.previousDisplay, Binding(code: 123, modifiers: three, keyLabel: "←"))',
+              'favorite_magnet_s3d_display_hotkeys_default_v1',
+              'if bindings[name] == nil && !occupied',
+              'if inserted { persist() }',
+          ]
+          missing_display = [x for x in required_display if x not in hotkeys]
+          if missing_display: raise SystemExit('ERROR: S3-D hotkey defaults missing: ' + ', '.join(missing_display))
+          assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder CGEventTap isolation changed'
+          setting = Path('MagnetSettings.swift').read_text()
+          assert '다음 ⌃⌥⌘→ / 이전 ⌃⌥⌘←' in setting, 'ERROR: shortcut help missing'
+          print('MAGNET-S3D monitor navigation hotkeys / safe one-time migration: VERIFIED')
           PY_MAGNET_S3C
           # MAINT1: only current app bundle ID, explicit action, no privilege escalation or other-app TCC reset.
           python3 - <<'PY_FAVORITE_MAINT1'
@@ -489,6 +504,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-MAGNET-S3C-UI2-FIX1-MAINT1-FIX1-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3D-MAINT1-FIX1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
