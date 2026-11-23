@@ -1639,7 +1639,7 @@ struct FolderPermissionView: View {
     }
 
     var body: some View {
-        ScrollView { content }
+        ScrollView { content.padding(20) }
     }
 
     // 고급 설정 내부에 중첩 ScrollView 없이 삽입할 수 있는 동일한 폴더 접근 UI.
@@ -1650,8 +1650,8 @@ struct FolderPermissionView: View {
                 Text("다운로드·문서·바탕화면 등 필요한 폴더를 미리 지정할 수 있습니다. 버튼을 누르면 macOS의 기본 폴더 선택 창이 나타납니다. 사용자가 직접 선택해야 하며, 앱이 권한을 강제로 허용하지는 않습니다.")
                     .font(.subheadline).foregroundColor(.secondary)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("1. 자주 사용하는 폴더 선택").font(.headline)
+                GroupBox("자주 사용하는 폴더 선택") {
+                    VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
                         Button("다운로드 폴더") { permissions.chooseFolders(startAt: suggested(.downloadsDirectory)) }
                         Button("문서 폴더") { permissions.chooseFolders(startAt: suggested(.documentDirectory)) }
@@ -1660,11 +1660,11 @@ struct FolderPermissionView: View {
                     Button("다른 폴더 / 외장 디스크 선택…") { permissions.chooseFolders() }
                     Text("폴더 선택 후에도 macOS에서 추가 승인 창이 나타날 수 있습니다. 선택한 경로의 읽기·쓰기 권한을 무조건 보장하는 기능은 아닙니다.")
                         .font(.caption).foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("2. 최근 선택한 폴더").font(.headline)
+                GroupBox("최근 선택한 폴더") {
+                    VStack(alignment: .leading, spacing: 9) {
                     if permissions.selectedPaths.isEmpty {
                         Text("아직 선택한 폴더가 없습니다.").foregroundColor(.secondary)
                     } else {
@@ -1679,30 +1679,17 @@ struct FolderPermissionView: View {
                             }
                         }
                     }
-                    Text("이 목록은 사용자가 선택한 폴더를 기억하는 용도이며 macOS의 실제 권한 상태를 표시하지 않습니다.")
+                    Text("이 목록은 최근 선택한 경로이며 macOS 권한 상태를 의미하지 않습니다.")
                         .font(.caption2).foregroundColor(.secondary)
                     Text(permissions.notice).font(.caption).foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("3. macOS 개인정보 접근 권한 관리").font(.headline)
-                    HStack(spacing: 10) {
-                        Button("파일 및 폴더 설정 열기") { permissions.openFilesAndFoldersSettings() }
-                        Button("손쉬운 사용 설정 열기") { permissions.openAccessibilitySettings() }
-                    }
-                    Button("전체 디스크 접근 설정 열기 (선택 사항)") {
-                        permissions.openFullDiskAccessSettings()
-                    }
-                    Text("전체 디스크 접근은 일반적인 이미지·영상 변환에 필요하지 않습니다. 반드시 필요한 경우에만 Mac 시스템 설정에서 직접 승인하세요. macOS 버전에 따라 설정 화면의 위치가 다를 수 있습니다.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-
-                Text("참고: 현재 GitHub 앱은 임시 서명입니다. 앱을 새로 빌드해 설치하면 macOS가 접근 권한을 다시 요청할 수 있으며, 이 현상은 폴더 선택만으로 완전히 해결되지 않습니다.")
+                Text("macOS 파일 및 폴더·전체 디스크 접근 권한은 위의 '권한·로그인 항목 관리'에서 확인하세요.")
                     .font(.caption).foregroundColor(.secondary)
+                Text("GitHub 임시 서명 앱을 새로 설치하면 macOS가 접근 승인을 다시 요청할 수 있습니다.")
+                    .font(.caption2).foregroundColor(.secondary)
             }
-            .padding(22)
     }
 }
 
@@ -1884,9 +1871,7 @@ struct HelpAndSettingsView: View {
     @State private var awakeKeyName: String = ""
     @State private var awakeKeyFlags: NSEvent.ModifierFlags = []
     @State private var awakeKeyMonitor: Any? = nil
-    @State private var launchAtLoginRegistered: Bool = FavoriteLaunchAtLogin.isRegistered
-    @State private var launchAtLoginStatus: String = FavoriteLaunchAtLogin.statusDescription
-    @State private var launchAtLoginNotice: String = ""
+    @State private var showWheelDiagnostics = false
     @State private var wheelMonitorStatus = "확인 전"
     @State private var wheelRecentDiagnostic = "아직 파일 드래그 시도 없음"
     @State private var showingSetupCleanup = false
@@ -1914,11 +1899,11 @@ struct HelpAndSettingsView: View {
                     Spacer()
                 }
                 Picker("설정 항목", selection: $selectedTab) {
-                    Text("⌨️ 단축키 설정").tag(0)
-                    Text("🏷️ 이름 변환 양식").tag(1)
-                    Text("📖 사용 설명서").tag(2)
-                    Text("⚙️ 고급 설정").tag(3)
-                    Text("🧲 창 정렬").tag(4)
+                    Text("단축키").tag(0)
+                    Text("파일명").tag(1)
+                    Text("사용법").tag(2)
+                    Text("고급").tag(3)
+                    Text("창 정렬").tag(4)
                 }.labelsHidden().pickerStyle(.segmented)
             }
             .padding(18).background(.regularMaterial)
@@ -1938,23 +1923,30 @@ struct HelpAndSettingsView: View {
             
             Divider()
             HStack {
-                Text("💡 수천 개의 파일을 한 번에 드래그해도 누락 없이 백그라운드에서 초고속으로 처리됩니다.")
+                Text(selectedTab == 4 ? "창 정렬과 드래그 상태는 창 정렬 탭에서 확인하세요."
+                     : selectedTab == 3 ? "권한·로그인·폴더 접근을 한 곳에서 관리합니다."
+                     : "설정은 변경하면 바로 저장됩니다.")
                     .font(.caption).foregroundColor(.secondary)
                 Spacer()
-                Button(selectedTab == 4 ? "창 정렬 기본 단축키 복원" : "기본 설정 복원") {
-                    stopRecording()
-                    if selectedTab == 4 {
-                        FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()
-                        FavoriteMagnetPreferences.shared.notify()
-                        FileProcessor.showToast("창 정렬 기본 단축키가 복원되었습니다.")
-                    } else {
-                        settings.resetToFavoriteDefaults()
-                        settings.renamePattern = ShortcutSettings.defaultRenamePattern
-                        _ = FavoriteAwakeHotKey.shared.changePreset(.controlOptionPeriod)
-                        FavoriteAwakeHotKey.shared.setToggleMinutes(60)
-                        awakeMinutes = FavoriteAwakeHotKey.shared.toggleMinutes
-                        (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
-                        FileProcessor.showToast("단축키 및 작동 방식이 기본값으로 복원되었습니다.")
+                if selectedTab == 0 || selectedTab == 1 || selectedTab == 4 {
+                    Button(selectedTab == 4 ? "창 정렬 기본키 복원" :
+                           selectedTab == 1 ? "파일명 양식 초기화" : "단축키 초기화") {
+                        stopRecording()
+                        if selectedTab == 4 {
+                            FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()
+                            FavoriteMagnetPreferences.shared.notify()
+                            FileProcessor.showToast("창 정렬 기본 단축키가 복원되었습니다.")
+                        } else if selectedTab == 1 {
+                            settings.renamePattern = ShortcutSettings.defaultRenamePattern
+                            FileProcessor.showToast("파일명 양식이 기본값으로 복원되었습니다.")
+                        } else {
+                            settings.resetToFavoriteDefaults()
+                            _ = FavoriteAwakeHotKey.shared.changePreset(.controlOptionPeriod)
+                            FavoriteAwakeHotKey.shared.setToggleMinutes(60)
+                            awakeMinutes = FavoriteAwakeHotKey.shared.toggleMinutes
+                            (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+                            FileProcessor.showToast("단축키와 작동 방식이 기본값으로 복원되었습니다.")
+                        }
                     }
                 }
                 Button("닫기") { stopRecording(); stopAwakeRecording(); NSApp.keyWindow?.close() }
@@ -1967,11 +1959,6 @@ struct HelpAndSettingsView: View {
          }
          .onAppear {
              refreshWheelMonitorStatus()
-             refreshLaunchAtLoginStatus()
-         }
-         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-             // 사용자가 시스템 설정에서 로그인 항목 승인을 변경했으면 즉시 반영합니다.
-             refreshLaunchAtLoginStatus()
          }
          .onReceive(NotificationCenter.default.publisher(for: ToolWindowManager.settingsNavigation)) { note in
              if let newTab = note.userInfo?["tab"] as? Int, (0...4).contains(newTab) {
@@ -1989,101 +1976,58 @@ struct HelpAndSettingsView: View {
          .onDisappear { stopRecording(); stopAwakeRecording() }
     }
     
-    private func refreshLaunchAtLoginStatus() {
-        launchAtLoginRegistered = FavoriteLaunchAtLogin.isRegistered
-        launchAtLoginStatus = FavoriteLaunchAtLogin.statusDescription
-    }
-
-    // 사용자에게는 필요할 때만 표시하는 입력 감시·폴더 접근 관리 화면.
+    // S3-E: 권한/로그인·휠 진단·폴더 설정을 중복 없이 분리한 고급 설정.
+    // 실제 macOS 승인은 통합 설치·삭제 관리 팝업에서만 요청합니다.
     var advancedTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("고급 설정").font(.title3.bold()).foregroundColor(.orange)
-                Text("평상시에는 변경하지 않아도 됩니다. 휠 안전 모드는 기본 적용되며, 문제가 있을 때만 진단·재연결을 사용하세요.")
-                    .font(.caption).foregroundColor(.secondary)
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("새 설치·삭제 전 정리", systemImage: "checkmark.shield")
-                        .font(.headline).foregroundColor(.orange)
-                    Text("새 앱 설치 후 권한 요청을 시작하거나, 앱 삭제 전 로그인 항목과 개인정보 보호 권한을 정리합니다. macOS 보안 권한의 최종 승인·해제는 사용자가 확인해야 합니다.")
-                        .font(.caption).foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("설치·삭제 관리 열기…") { showingSetupCleanup = true }
-                        .buttonStyle(.borderedProminent)
+                Text("고급 설정")
+                    .font(.title3.bold())
+                GroupBox("시스템 권한 및 자동 실행") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("입력 모니터링, 손쉬운 사용, 로그인 자동 실행은 아래 관리 화면에서 확인하고 변경합니다.")
+                            .font(.caption).foregroundColor(.secondary)
+                        Button("권한·로그인 항목 관리…") { showingSetupCleanup = true }
+                            .buttonStyle(.borderedProminent)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                .padding(14).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 9) {
-                    Label("시작프로그램", systemImage: "power")
-                        .font(.headline).foregroundColor(.orange)
-                    Toggle("Mac 로그인 시 00Favorite 자동 실행", isOn: Binding(
-                        get: { launchAtLoginRegistered },
-                        set: { newValue in
-                            do {
-                                try FavoriteLaunchAtLogin.setRegistered(newValue)
-                                launchAtLoginNotice = ""
-                            } catch {
-                                launchAtLoginNotice = "설정 변경 실패: \(error.localizedDescription)"
-                            }
-                            refreshLaunchAtLoginStatus()
-                            (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
-                        }
-                    ))
-                    Text("현재 상태: \(launchAtLoginStatus)")
-                        .font(.caption).foregroundColor(.secondary)
-                    if FavoriteLaunchAtLogin.needsApproval {
-                        Text("macOS의 로그인을 위한 추가 승인이 필요합니다. 아래 버튼으로 시스템 설정에서 00Favorite을 허용해 주세요.")
-                            .font(.caption).foregroundColor(.orange)
-                    }
-                    if !launchAtLoginNotice.isEmpty {
-                        Text(launchAtLoginNotice).font(.caption).foregroundColor(.red)
-                    }
-                    HStack(spacing: 10) {
-                        Button("로그인 항목 시스템 설정") { FavoriteLaunchAtLogin.openSystemSettings() }
-                        Button("상태 새로고침") { refreshLaunchAtLoginStatus() }
-                    }
-                    Text("기본값은 꺼짐입니다. 켜면 다음 Mac 로그인부터 메뉴바에 00Favorite이 자동으로 실행됩니다. 잠자기 방지는 자동으로 켜지지 않습니다.")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-                .padding(14).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 9) {
-                    Label("안전 모드 (항상 적용)", systemImage: "shield.checkered")
-                        .font(.headline).foregroundColor(.green)
-                    Text("Finder의 키 입력과 마우스 드래그를 가로채거나 변경하지 않습니다. 휠 조각 위에 실제 파일을 드롭한 경우에만 00Favorite 작업이 시작됩니다. 다른 위치에 놓으면 macOS가 원래 드롭을 처리합니다.")
-                        .font(.caption).foregroundColor(.secondary)
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.shield.fill").foregroundColor(.green)
-                        Text("휠 감지: 자동 켜짐 (설정할 필요 없음)")
-                            .font(.subheadline)
-                    }
-                    Toggle("Finder에서 시작한 파일 드래그만 감지 (권장)", isOn: $settings.finderOnlyDetection)
-                    HStack(spacing: 8) {
-                        Text("휠 입력 감시: \(wheelMonitorStatus)")
-                            .font(.caption.bold())
-                        Spacer()
-                        Button("상태 새로고침") { refreshWheelMonitorStatus() }
-                        Button("감시 재연결") {
-                            guard let delegate = NSApp.delegate as? AppDelegate else { return }
-                            let connected = delegate.reconnectWheelMonitor()
-                            refreshWheelMonitorStatus()
-                            if !connected {
-                                awakeHotkeyNotice = "휠 감시 연결 실패: macOS 개인정보 보호 및 보안 → 입력 모니터링·손쉬운 사용에서 00Favorite 권한을 확인하고 앱을 재시작해 주세요."
+                GroupBox("Finder 파일 드래그 휠") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("파일이나 텍스트를 드래그하는 macOS 기본 동작은 변경하지 않습니다. 파일이 실제 휠 영역에 놓였을 때만 작업을 시작합니다.")
+                            .font(.caption).foregroundColor(.secondary)
+                        Toggle("Finder에서 시작한 파일 드래그만 감지 (권장)", isOn: $settings.finderOnlyDetection)
+                        HStack(spacing: 10) {
+                            Image(systemName: "checkmark.shield")
+                                .foregroundColor(.green)
+                            Text("휠 감시: \(wheelMonitorStatus)")
+                                .font(.subheadline)
+                            Spacer(minLength: 4)
+                            Button("다시 확인") { refreshWheelMonitorStatus() }
+                            Button("감시 재연결") {
+                                guard let delegate = NSApp.delegate as? AppDelegate else { return }
+                                let connected = delegate.reconnectWheelMonitor()
+                                refreshWheelMonitorStatus()
+                                if !connected {
+                                    awakeHotkeyNotice = "휠 감시 연결 실패: 권한·로그인 항목 관리에서 입력 모니터링 상태를 확인한 후 앱을 다시 실행하세요."
+                                }
                             }
                         }
-                    }
-                    Text("최근 드래그 진단: \(wheelRecentDiagnostic)")
-                        .font(.caption2).foregroundColor(.secondary)
-                        .textSelection(.enabled)
-                    Text("탭 활성은 실제 이벤트 수신을 보장하지 않습니다. 누름/드래그/수정키 건수가 증가하는지 확인하세요. 진단 기록은 설정창 클릭으로 덮어쓰지 않습니다.")
-                        .font(.caption2).foregroundColor(.secondary)
-                        .font(.caption2).foregroundColor(.secondary)
-                    HStack(spacing: 8) {
-                        Button("입력 모니터링 설정") { FolderAccessPreferences.shared.openInputMonitoringSettings() }
-                        Button("손쉬운 사용 설정") { FolderAccessPreferences.shared.openAccessibilitySettings() }
-                    }
-                    Text("기본값: 변환 Shift / 편집 Option+Shift / 액션 Control. 설정에서 다른 조합으로 변경했다면 그 조합을 사용하세요. Finder 파일 드래그 시작 후 키를 새로 눌러야 휠이 열립니다.")
-                        .font(.caption2).foregroundColor(.secondary)
+                        if !awakeHotkeyNotice.isEmpty {
+                            Text(awakeHotkeyNotice).font(.caption).foregroundColor(.orange)
+                        }
+                        DisclosureGroup("휠 상세 진단", isExpanded: $showWheelDiagnostics) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("최근 파일 드래그: \(wheelRecentDiagnostic)")
+                                    .font(.caption).foregroundColor(.secondary)
+                                    .textSelection(.enabled)
+                                Text("기본키: 변환 Shift / 편집 Option+Shift / 액션 Control. 실제 파일 드래그 중 단축키를 새로 눌러 휠을 실행합니다.")
+                                    .font(.caption).foregroundColor(.secondary)
+                                Text("권한이 정상이어도 실제 이벤트가 들어오지 않을 수 있습니다. 이 경우 감시 재연결 및 앱 재실행을 확인하세요.")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }.padding(.top, 7)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                .padding(14).background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                Divider()
                 FolderPermissionView().content
             }
             .padding(20)

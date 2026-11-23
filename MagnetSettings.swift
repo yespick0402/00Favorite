@@ -207,6 +207,7 @@ private struct FavoriteMagnetGrid: View {
 struct FavoriteMagnetSettingsView: View {
     @ObservedObject private var prefs = FavoriteMagnetPreferences.shared
     @State private var selected: FavoriteWindowSnap.Layout = .leftHalf
+    @State private var showDragDiagnostics = false
 
     private var groups: [(String, [(FavoriteWindowSnap.Layout, String)])] {
         [
@@ -261,6 +262,80 @@ struct FavoriteMagnetSettingsView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    GroupBox("창 정렬 · 기본 작동 설정") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("창 정렬 사용", isOn: Binding(
+                                get: { FavoriteWindowSnap.shared.isEnabled },
+                                set: { newValue in
+                                    FavoriteWindowSnap.shared.setEnabled(newValue)
+                                    FavoriteWindowSnapDrag.shared.refreshMonitoring()
+                                    FavoriteWindowSnapHotKeys.shared.refresh()
+                                    prefs.notify()
+                                }
+                            ))
+                            Toggle("창을 화면 가장자리로 드래그해 정렬", isOn: Binding(
+                                get: { FavoriteWindowSnapDrag.shared.isEnabled },
+                                set: { newValue in
+                                    FavoriteWindowSnapDrag.shared.setEnabled(newValue)
+                                    prefs.notify()
+                                }
+                            ))
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: FavoriteWindowSnapDrag.shared.isMonitoring
+                                      ? "checkmark.circle.fill" : "info.circle")
+                                    .foregroundColor(FavoriteWindowSnapDrag.shared.isMonitoring ? .green : .orange)
+                                Text(FavoriteWindowSnapDrag.shared.connectionStatus)
+                                    .font(.subheadline.bold())
+                                Spacer()
+                                Button("드래그 감시 다시 연결") {
+                                    FavoriteWindowSnapDrag.shared.reconnectMonitoring()
+                                    prefs.notify()
+                                }
+                                .disabled(!FavoriteWindowSnap.shared.isEnabled ||
+                                          !FavoriteWindowSnapDrag.shared.isEnabled ||
+                                          !AXIsProcessTrusted())
+                            }
+                            if !AXIsProcessTrusted() {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("다른 앱의 창을 드래그 정렬하려면 macOS 손쉬운 사용 승인이 필요합니다.")
+                                        .font(.caption).foregroundColor(.secondary)
+                                    Spacer()
+                                    Button("손쉬운 사용 설정") {
+                                        FolderAccessPreferences.shared.openAccessibilitySettings()
+                                    }
+                                }
+                            } else if !FavoriteWindowSnapDrag.shared.isEnabled {
+                                Text("드래그 정렬은 별도 옵션입니다. 위 항목을 켜야 제목 표시줄을 화면 가장자리로 끌 때 작동합니다.")
+                                    .font(.caption).foregroundColor(.secondary)
+                            } else {
+                                Text("다른 앱의 창 제목 표시줄 빈 곳을 잡고 화면 가장자리로 이동해 미리보기가 표시되면 마우스를 놓으세요.")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                            DisclosureGroup("드래그 상세 진단", isExpanded: $showDragDiagnostics) {
+                                VStack(alignment: .leading, spacing: 7) {
+                                    ForEach(FavoriteWindowSnapDrag.shared.diagnostics, id: \.self) { line in
+                                        Text(line)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundColor(.secondary)
+                                            .textSelection(.enabled)
+                                    }
+                                    HStack {
+                                        Button("진단 초기화") {
+                                            FavoriteWindowSnapDrag.shared.resetDiagnostics()
+                                            prefs.notify()
+                                        }
+                                        Button("상태 다시 확인") {
+                                            FavoriteWindowSnapDrag.shared.refreshMonitoring()
+                                            prefs.notify()
+                                        }
+                                    }
+                                }
+                                .padding(.top, 7)
+                            }
+                        }
+                        .padding(8)
+                    }
+                    Divider()
                     HStack {
                         Text(selectedName).font(.title2.bold())
                         Spacer()
@@ -304,13 +379,6 @@ struct FavoriteMagnetSettingsView: View {
                                 get: { prefs.isShortcutEnabled(selected) },
                                 set: { prefs.setShortcutEnabled($0, for: selected) }
                             ))
-                            HStack {
-                                Button("첨부 이미지의 기본 단축키 복원") {
-                                    FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()
-                                    prefs.notify()
-                                }
-                                Spacer()
-                            }
                             Text("Control·Option·Command·Shift 중 2개 이상과 문자·방향키·Return(Enter)·Delete를 조합할 수 있습니다.")
                                 .font(.caption).foregroundColor(.secondary)
                         }.padding(8)
@@ -349,16 +417,12 @@ struct FavoriteMagnetSettingsView: View {
                                 .font(.caption2).foregroundColor(.secondary)
                         }.padding(8)
                     }
-                    GroupBox("표시 설정") {
+                    GroupBox("메뉴 표시") {
                         VStack(alignment: .leading, spacing: 10) {
                             Toggle("메뉴 막대에서 이 명령 표시", isOn: Binding(
                                 get: { prefs.isVisibleInMenu(selected) },
                                 set: { prefs.setVisibleInMenu($0, for: selected) }
                             ))
-                            Toggle("초록색 창 버튼 메뉴에 표시 (추후 지원)", isOn: .constant(false))
-                                .disabled(true)
-                            Text("macOS 시스템의 초록색 버튼 메뉴를 직접 수정하는 기능은 지원되지 않습니다. 안정적인 별도 메뉴 방식은 후속 단계에서 검토합니다.")
-                                .font(.caption2).foregroundColor(.secondary)
                         }.padding(8)
                     }
                     HStack {
@@ -370,13 +434,22 @@ struct FavoriteMagnetSettingsView: View {
                         .font(.caption2).foregroundColor(.secondary)
                     Text("⌃⌥←: 현재 화면 왼쪽 절반 → 한 번 더 누르면 왼쪽 모니터 오른쪽 절반.")
                         .font(.caption2).foregroundColor(.secondary)
-                    Text("화면이 끝나는 곳에서는 다른 화면으로 순환하지 않습니다. 별도 다음·이전 디스플레이 명령도 필요하다면 단축키를 직접 지정할 수 있습니다.")
+                    Text("화면 끝에서는 다음 모니터로 순환하지 않습니다. 별도 다음·이전 디스플레이 단축키도 직접 지정할 수 있습니다.")
+                        .font(.caption2).foregroundColor(.secondary)
+                    Text("macOS 초록색 창 버튼의 시스템 메뉴 변경은 현재 지원하지 않습니다.")
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 .padding(16)
             }
             .frame(maxWidth: .infinity)
         }
-        .onAppear { prefs.notify() }
+        .onAppear {
+            FavoriteWindowSnapDrag.shared.refreshMonitoring()
+            prefs.notify()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            FavoriteWindowSnapDrag.shared.refreshMonitoring()
+            prefs.notify()
+        }
     }
 }

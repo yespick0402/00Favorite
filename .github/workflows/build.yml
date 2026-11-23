@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3D-REPEAT-MAINT1-FIX1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3E-DRAG-SETTINGS
 
 jobs:
   build:
@@ -63,7 +63,7 @@ jobs:
           # LOGIN1: macOS ServiceManagement API와 설정 UI, 메뉴 액션이 함께 들어왔는지 확인합니다.
           grep -q 'import ServiceManagement' Part1.swift || { echo 'ERROR: ServiceManagement import 누락'; exit 1; }
           grep -q 'SMAppService.mainApp' Part1.swift || { echo 'ERROR: 로그인 항목 등록 API 누락'; exit 1; }
-          grep -q 'Mac 로그인 시 00Favorite 자동 실행' Part1.swift || { echo 'ERROR: 로그인 자동 실행 설정 UI 누락'; exit 1; }
+          grep -q 'Toggle("Mac 로그인 시 00Favorite 자동 실행"' SetupCleanup.swift || { echo 'ERROR: 통합 관리 화면 로그인 자동 실행 설정 UI 누락'; exit 1; }
           grep -q '#selector(toggleLaunchAtLogin)' Part2.swift || { echo 'ERROR: 로그인 항목 메뉴 누락'; exit 1; }
           # MAGNET-S2: 기존 AX 메뉴 정렬 + 독립 읽기 전용 창 드래그 감시.
           python3 - <<'PY_WINDOW_SNAP'
@@ -85,9 +85,9 @@ jobs:
           assert 'guard movedWindow else { return }' in src, 'ERROR: preview movement guard missing'
           assert 'guard movedWindow, let tracked = drag,' in src, 'ERROR: snap movement guard missing'
           assert 'candidateForTitlebarDrag(at:' in src, 'ERROR: titlebar hit test missing'
-          assert '드래그 진단 초기화' in src, 'ERROR: drag diagnostic menu missing'
+          assert 'DisclosureGroup("드래그 상세 진단"' in Path('MagnetSettings.swift').read_text(), 'ERROR: drag diagnostic settings missing'
           assert '드래그 중 창 후보 복구' in src, 'ERROR: mouse-down miss recovery missing'
-          assert '#selector(toggleWindowSnapDragEnabled)' in src, 'ERROR: menu toggle missing'
+          assert 'Toggle("창을 화면 가장자리로 드래그해 정렬"' in Path('MagnetSettings.swift').read_text(), 'ERROR: settings drag toggle missing'
           print('MAGNET-S2 passive mouse drag / overlay / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
           # MAGNET-S3A: global hotkeys must use Carbon, never an extra event tap.
@@ -116,7 +116,7 @@ jobs:
               'FavoriteMagnetPreferences.shared.layoutForEdge(',
               'case maximize, center, restore, centerTwoThirds',
               'Binding(code: 36, modifiers: two, keyLabel: "↩")', 'event.keyCode != 53 else',
-              '창 정렬 설정…'
+              '창 정렬 설정 및 드래그 상태…'
           ]
           combined = Path('combined_main.swift').read_text()
           missing_settings = [x for x in required_settings if x not in combined]
@@ -208,6 +208,37 @@ jobs:
           assert repeat.index('horizontalNeighbor(') < repeat.index('if key == nil')
           assert 'originals[pid, default: []].append(OriginalWindow(window: window, frame: current))' in repeat
           print('MAGNET-S3D repeated half-snap edge crossing / symmetric target / original restore: VERIFIED')
+          # S3-E: two independent switches and actionable diagnostic are visible in ONE settings screen.
+          magnet_source = Path('MagnetSettings.swift').read_text()
+          main_source = Path('Part1.swift').read_text()
+          maintenance_source = Path('SetupCleanup.swift').read_text()
+          s3e_needed = [
+              'Toggle("창 정렬 사용"',
+              'Toggle("창을 화면 가장자리로 드래그해 정렬"',
+              'FavoriteWindowSnapDrag.shared.connectionStatus',
+              'FavoriteWindowSnapDrag.shared.reconnectMonitoring()',
+              'DisclosureGroup("드래그 상세 진단"',
+              'FavoriteWindowSnapDrag.shared.refreshMonitoring()',
+          ]
+          missing_s3e = [x for x in s3e_needed if x not in magnet_source]
+          if missing_s3e: raise SystemExit('ERROR: S3-E unified drag controls missing: ' + ', '.join(missing_s3e))
+          drag_source = source2.split('final class FavoriteWindowSnapDrag', 1)[1].split(
+              'final class FavoriteWindowSnapHotKeys', 1)[0]
+          for needle in ['var connectionStatus: String', 'func reconnectMonitoring()', 'NSEvent.addGlobalMonitorForEvents',
+                         'AXIsProcessTrusted()', 'guard movedWindow else { return }']:
+              assert needle in drag_source, 'ERROR: S3-E drag regression: ' + needle
+          assert 'NSEvent.addGlobalMonitorForEvents' in drag_source
+          assert 'resetWindowSnapDragDiagnostics' not in source2
+          assert 'toggleWindowSnapDragEnabled' not in source2
+          assert '창 정렬 설정 및 드래그 상태…' in source2
+          assert 'Text("시작프로그램")' not in main_source
+          assert '권한·로그인 항목 관리…' in main_source
+          assert 'GroupBox("Finder 파일 드래그 휠")' in main_source
+          assert 'Text("3. macOS 개인정보 접근 권한 관리")' not in main_source
+          assert 'Toggle("Mac 로그인 시 00Favorite 자동 실행"' in maintenance_source
+          assert 'process.arguments = ["reset", "All", expectedBundleID]' in maintenance_source
+          assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder input tap changed'
+          print('MAGNET-S3E unified settings, drag diagnostics, login/permission consolidation and wheel isolation: VERIFIED')
           PY_MAGNET_S3C
           # MAINT1: only current app bundle ID, explicit action, no privilege escalation or other-app TCC reset.
           python3 - <<'PY_FAVORITE_MAINT1'
@@ -517,6 +548,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-MAGNET-S3D-REPEAT-MAINT1-FIX1-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3E-DRAG-SETTINGS-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
