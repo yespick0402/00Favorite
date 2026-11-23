@@ -85,9 +85,9 @@ jobs:
           assert 'guard movedWindow else { return }' in src, 'ERROR: preview movement guard missing'
           assert 'guard movedWindow, let tracked = drag,' in src, 'ERROR: snap movement guard missing'
           assert 'candidateForTitlebarDrag(at:' in src, 'ERROR: titlebar hit test missing'
-          assert '드래그 진단 초기화' in src, 'ERROR: drag diagnostic menu missing'
+          assert 'DisclosureGroup("드래그 상세 진단"' in Path('MagnetSettings.swift').read_text(), 'ERROR: drag diagnostic settings missing'
           assert '드래그 중 창 후보 복구' in src, 'ERROR: mouse-down miss recovery missing'
-          assert '#selector(toggleWindowSnapDragEnabled)' in src, 'ERROR: menu toggle missing'
+          assert 'Toggle("창을 화면 가장자리로 드래그해 정렬"' in Path('MagnetSettings.swift').read_text(), 'ERROR: settings drag toggle missing'
           print('MAGNET-S2 passive mouse drag / overlay / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
           # MAGNET-S3A: global hotkeys must use Carbon, never an extra event tap.
