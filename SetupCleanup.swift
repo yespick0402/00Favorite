@@ -68,6 +68,7 @@ struct FavoriteSetupCleanupView: View {
     @State private var inputGranted = CGPreflightListenEventAccess()
     @State private var accessibilityGranted = AXIsProcessTrusted()
     @State private var loginState = FavoriteLaunchAtLogin.statusDescription
+    @State private var loginNotice = ""
     @State private var registerAtLogin = FavoriteLaunchAtLogin.isRegistered
     @State private var eraseLocalSettings = false
     @State private var eraseOnExit = false
@@ -80,6 +81,7 @@ struct FavoriteSetupCleanupView: View {
         inputGranted = CGPreflightListenEventAccess()
         accessibilityGranted = AXIsProcessTrusted()
         loginState = FavoriteLaunchAtLogin.statusDescription
+        registerAtLogin = FavoriteLaunchAtLogin.isRegistered
     }
 
     private func statusLine(_ name: String, ready: Bool, detail: String) -> some View {
@@ -103,16 +105,8 @@ struct FavoriteSetupCleanupView: View {
             return
         }
         var notes: [String] = []
-        if registerAtLogin {
-            do {
-                try FavoriteLaunchAtLogin.setRegistered(true)
-                notes.append("로그인 자동 실행 등록을 요청했습니다.")
-            } catch {
-                notes.append("로그인 자동 실행 등록 오류: \(error.localizedDescription)")
-            }
-        } else {
-            notes.append("로그인 자동 실행은 선택하지 않아 변경하지 않았습니다.")
-        }
+        // 로그인 자동 실행은 같은 화면의 단일 토글에서 즉시 저장합니다.
+        notes.append("로그인 자동 실행: \(FavoriteLaunchAtLogin.statusDescription). 위 토글에서 언제든 변경할 수 있습니다.")
         if !CGPreflightListenEventAccess() {
             _ = CGRequestListenEventAccess()
             notes.append("입력 모니터링 승인을 macOS에 요청했습니다.")
@@ -209,7 +203,24 @@ struct FavoriteSetupCleanupView: View {
                         Text("버튼 한 번으로 현재 권한을 점검하고 필요한 macOS 승인 요청을 시작합니다. 보안 권한을 실제로 켜는 마지막 클릭은 macOS에서 직접 승인해야 합니다.")
                             .font(.caption).foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Toggle("Mac 로그인 시 자동 실행도 함께 등록", isOn: $registerAtLogin)
+                        Toggle("Mac 로그인 시 00Favorite 자동 실행", isOn: Binding(
+                            get: { registerAtLogin },
+                            set: { newValue in
+                                do {
+                                    try FavoriteLaunchAtLogin.setRegistered(newValue)
+                                    loginNotice = ""
+                                } catch {
+                                    loginNotice = "로그인 항목 변경 실패: \(error.localizedDescription)"
+                                }
+                                refreshStatus()
+                                (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+                            }
+                        ))
+                        Text("로그인 항목: \(loginState) · 토글을 변경하면 즉시 저장됩니다.")
+                            .font(.caption).foregroundColor(.secondary)
+                        if !loginNotice.isEmpty {
+                            Text(loginNotice).font(.caption).foregroundColor(.red)
+                        }
                         Button {
                             startInitialSetup()
                         } label: {
@@ -231,8 +242,6 @@ struct FavoriteSetupCleanupView: View {
                                    detail: "Finder 파일 드래그 중 전역 휠 감시에 필요합니다.")
                         statusLine("손쉬운 사용", ready: accessibilityGranted,
                                    detail: "다른 앱 창의 이동·크기 조절에 필요합니다.")
-                        statusLine("로그인 자동 실행", ready: FavoriteLaunchAtLogin.status == .enabled,
-                                   detail: loginState)
                         HStack(spacing: 8) {
                             Button("입력 모니터링 설정") {
                                 FolderAccessPreferences.shared.openInputMonitoringSettings()
