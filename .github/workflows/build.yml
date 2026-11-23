@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C-MAINT1
 
 jobs:
   build:
@@ -27,9 +27,10 @@ jobs:
           test -s Part1.swift || { echo 'ERROR: Part1.swift 없음'; exit 1; }
           test -s Part2.swift || { echo 'ERROR: Part2.swift 없음'; exit 1; }
           test -s MagnetSettings.swift || { echo 'ERROR: MagnetSettings.swift 없음'; exit 1; }
+          test -s SetupCleanup.swift || { echo 'ERROR: SetupCleanup.swift 없음'; exit 1; }
           test -s icon.png || { echo 'ERROR: icon.png 없음'; exit 1; }
           test -s icon_awake.png || { echo 'ERROR: icon_awake.png 없음'; exit 1; }
-          cat Part1.swift Part2.swift MagnetSettings.swift > combined_main.swift
+          cat Part1.swift Part2.swift MagnetSettings.swift SetupCleanup.swift > combined_main.swift
           # Swift 구문 검사로는 SDK 이름 변경 오류를 검출할 수 없으므로 구형 상수를 차단합니다.
           if grep -nF 'kCFRunLoopCommonModes' combined_main.swift; then
             echo 'ERROR: 구형 CoreFoundation 상수. CFRunLoopMode.commonModes를 사용하세요.' >&2
@@ -157,6 +158,40 @@ jobs:
           assert 'guard movedWindow else { return }' in source2, 'ERROR: titlebar movement safety removed'
           print('MAGNET-S3C adaptive banners / next & previous displays / Finder isolation: VERIFIED')
           PY_MAGNET_S3C
+          # MAINT1: only current app bundle ID, explicit action, no privilege escalation or other-app TCC reset.
+          python3 - <<'PY_FAVORITE_MAINT1'
+          from pathlib import Path
+          source = Path('SetupCleanup.swift').read_text()
+          first = Path('Part1.swift').read_text()
+          required = [
+              'static let expectedBundleID = "win.yespick.00favorite"',
+              'Bundle.main.bundleIdentifier == expectedBundleID',
+              'process.executableURL = executable',
+              'process.arguments = ["reset", "All", expectedBundleID]',
+              'FavoriteLaunchAtLogin.setRegistered(false)',
+              'CGRequestListenEventAccess()',
+              'AXIsProcessTrustedWithOptions(options)',
+              'alert.runModal() == .alertFirstButtonReturn',
+              'UserDefaults.standard.removePersistentDomain(forName: expectedBundleID)',
+              'static func resetPrivacyForCurrentApp()',
+              'func showBanner(message: String)',
+          ]
+          combined = source + first
+          missing = [marker for marker in required if marker not in combined]
+          if missing:
+              raise SystemExit('ERROR: MAINT1 missing safety requirements: ' + ', '.join(missing))
+          forbidden = [
+              'sudo', 'sqlite3', 'TCC.db', 'killall tccd',
+              'process.arguments = ["reset", "All"]',
+              'rm -rf', 'system("',
+          ]
+          unsafe = [word for word in forbidden if word in source]
+          if unsafe:
+              raise SystemExit('ERROR: MAINT1 forbidden unsafe operation: ' + ', '.join(unsafe))
+          assert 'FavoriteSetupCleanupView()' in first
+          assert first.count('CGEvent.tapCreate(') == 0
+          print('MAINT1 targeted consent/reset, safe confirmation and setup sheet: VERIFIED')
+          PY_FAVORITE_MAINT1
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
           # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
           python3 - <<'PY_AX_CAST'
@@ -423,6 +458,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-HK13-MAGNET-S3C-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3C-MAINT1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
