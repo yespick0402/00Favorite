@@ -366,9 +366,11 @@ struct FavoriteMagnetSettingsView: View {
                         Text("연결된 디스플레이: \(NSScreen.screens.count)대")
                     }
                     .font(.caption2).foregroundColor(.secondary)
-                    Text("모니터 이동 기본키: 다음 ⌃⌥⌘→ / 이전 ⌃⌥⌘←. 두 모니터라면 어느 쪽이든 반대쪽으로 이동합니다. 원하는 키로 변경할 수도 있습니다.")
+                    Text("⌃⌥→: 현재 화면 오른쪽 절반 → 한 번 더 누르면 오른쪽 모니터 왼쪽 절반.")
                         .font(.caption2).foregroundColor(.secondary)
-                    Text("현재 앱에서 다른 단축키와 겹치거나 macOS에 이미 예약된 경우 등록되지 않을 수 있습니다. 키보드 단축키 항목에서 확인·변경하세요.")
+                    Text("⌃⌥←: 현재 화면 왼쪽 절반 → 한 번 더 누르면 왼쪽 모니터 오른쪽 절반.")
+                        .font(.caption2).foregroundColor(.secondary)
+                    Text("화면이 끝나는 곳에서는 다른 화면으로 순환하지 않습니다. 별도 다음·이전 디스플레이 명령도 필요하다면 단축키를 직접 지정할 수 있습니다.")
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 .padding(16)
