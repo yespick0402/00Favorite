@@ -3101,7 +3101,10 @@ final class FavoriteWindowSnapHotKeys: NSObject {
             (.rightTwoThirds, Binding(code: 17, modifiers: three, keyLabel: "T")),
             (.maximize, Binding(code: 36, modifiers: two, keyLabel: "↩")),
             (.center, Binding(code: 8, modifiers: two, keyLabel: "C")),
-            (.restore, Binding(code: 51, modifiers: two, keyLabel: "⌫"))
+            (.restore, Binding(code: 51, modifiers: two, keyLabel: "⌫")),
+            // MAINT1-FIX1/S3D: 두 모니터에서 창만 이동. 기존 ⌃⌥ ←/→ 반쪽 정렬과 구분.
+            (.nextDisplay, Binding(code: 124, modifiers: three, keyLabel: "→")),
+            (.previousDisplay, Binding(code: 123, modifiers: three, keyLabel: "←"))
         ]
     }
     private var bindings: [String: Binding] = [:]
@@ -3127,6 +3130,28 @@ final class FavoriteWindowSnapHotKeys: NSObject {
             }
             persist()
             UserDefaults.standard.set(true, forKey: migrationKey)
+        }
+        // 이전 S3-C 설치자는 기본값 마이그레이션이 이미 끝났으므로
+        // 새 모니터 이동 단축키 두 개만 '미지정 + 충돌 없음'일 때 1회 추가합니다.
+        // 기존 사용자 지정 값이나 다른 정렬 단축키를 덮어쓰지 않습니다.
+        let displayMigrationKey = "favorite_magnet_s3d_display_hotkeys_default_v1"
+        if !UserDefaults.standard.bool(forKey: displayMigrationKey) {
+            let defaults = Self.magnetDefaults().filter {
+                $0.0 == .nextDisplay || $0.0 == .previousDisplay
+            }
+            var inserted = false
+            for (layout, preset) in defaults {
+                let name = String(layout.rawValue)
+                let occupied = bindings.values.contains {
+                    $0.code == preset.code && $0.modifiers == preset.modifiers
+                }
+                if bindings[name] == nil && !occupied {
+                    bindings[name] = preset
+                    inserted = true
+                }
+            }
+            if inserted { persist() }
+            UserDefaults.standard.set(true, forKey: displayMigrationKey)
         }
     }
 
