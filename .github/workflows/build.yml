@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C-MAINT1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3C-UI1-FIX1-MAINT1
 
 jobs:
   build:
@@ -130,9 +130,11 @@ jobs:
           source2 = Path('Part2.swift').read_text()
           pref = Path('MagnetSettings.swift').read_text()
           banner = [
-              'func showBanner(message: String)', 'hosting.fittingSize.height',
+              'func showBanner(message: String)', 'measuredTextHeight',
               'fixedSize(horizontal: false, vertical: true)',
-              'panel.ignoresMouseEvents = true', 'self.bannerWindow === panel',
+              'frame(width: textWidth, alignment: .leading)',
+              'visible.minY + 14', 'self.bannerWindow === panel',
+              'panel.ignoresMouseEvents = true',
           ]
           screen = [
               'case maximize, center, restore, centerTwoThirds, nextDisplay, previousDisplay',
@@ -156,7 +158,17 @@ jobs:
               if missing: raise SystemExit(f'ERROR: MAGNET-S3C {group} incomplete: {missing}')
           assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: second Finder event tap introduced'
           assert 'guard movedWindow else { return }' in source2, 'ERROR: titlebar movement safety removed'
-          print('MAGNET-S3C adaptive banners / next & previous displays / Finder isolation: VERIFIED')
+          # S3C-FIX1: Right-side windows MUST move to target origin before expanding.
+          code = source2.split('private func setFrame(_ cocoaRect: CGRect, for window: AXUIElement)', 1)[1]
+          code = code.split('private var primaryScreenTop', 1)[0]
+          first_position = code.index('AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)')
+          first_size = code.index('AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)')
+          assert first_position < first_size, 'ERROR: maximize must position first, then resize'
+          assert 'let corrected = readFrame(window)' in code, 'ERROR: bounded second resize verification missing'
+          assert code.count('let corrected = readFrame(window)') == 1, 'ERROR: resize retry must be bounded'
+          assert 'bannerWidth = min(maxPanelWidth, textWidth + 66)' in source1
+          assert 'visible.maxY - bannerHeight - 12' not in source1, 'ERROR: banner still top-aligned'
+          print('MAGNET-S3C UI1/FIX1 text-fit bottom banner / right-origin maximize: VERIFIED')
           PY_MAGNET_S3C
           # MAINT1: only current app bundle ID, explicit action, no privilege escalation or other-app TCC reset.
           python3 - <<'PY_FAVORITE_MAINT1'
@@ -458,6 +470,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-MAGNET-S3C-MAINT1-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3C-UI1-FIX1-MAINT1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
