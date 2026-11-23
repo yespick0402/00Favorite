@@ -233,6 +233,17 @@ struct FavoriteSetupCleanupView: View {
                                 FavoriteLaunchAtLogin.openSystemSettings()
                             }
                         }
+                        HStack(spacing: 8) {
+                            Button("파일 및 폴더 설정") {
+                                FolderAccessPreferences.shared.openFilesAndFoldersSettings()
+                            }
+                            Button("전체 디스크 접근 설정") {
+                                FolderAccessPreferences.shared.openFullDiskAccessSettings()
+                            }
+                        }
+                        Text("파일 및 폴더 권한은 실제 파일 선택·처리 시 macOS에서 별도로 요청할 수 있습니다. 전체 디스크 접근은 필수 기본 권한이 아니므로 자동으로 요청하지 않습니다.")
+                            .font(.caption2).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         Button("상태 다시 확인") { refreshStatus() }
                             .buttonStyle(.bordered)
                         Text("권한 변경 직후에는 상태에 반영되지 않을 수 있습니다. 앱을 완전히 종료했다가 다시 실행하면 정확하게 확인할 수 있습니다.")
