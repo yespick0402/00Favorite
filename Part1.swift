@@ -1639,7 +1639,7 @@ struct FolderPermissionView: View {
     }
 
     var body: some View {
-        ScrollView { content }
+        ScrollView { content.padding(20) }
     }
 
     // 고급 설정 내부에 중첩 ScrollView 없이 삽입할 수 있는 동일한 폴더 접근 UI.
@@ -1650,8 +1650,8 @@ struct FolderPermissionView: View {
                 Text("다운로드·문서·바탕화면 등 필요한 폴더를 미리 지정할 수 있습니다. 버튼을 누르면 macOS의 기본 폴더 선택 창이 나타납니다. 사용자가 직접 선택해야 하며, 앱이 권한을 강제로 허용하지는 않습니다.")
                     .font(.subheadline).foregroundColor(.secondary)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("1. 자주 사용하는 폴더 선택").font(.headline)
+                GroupBox("자주 사용하는 폴더 선택") {
+                    VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
                         Button("다운로드 폴더") { permissions.chooseFolders(startAt: suggested(.downloadsDirectory)) }
                         Button("문서 폴더") { permissions.chooseFolders(startAt: suggested(.documentDirectory)) }
@@ -1660,11 +1660,11 @@ struct FolderPermissionView: View {
                     Button("다른 폴더 / 외장 디스크 선택…") { permissions.chooseFolders() }
                     Text("폴더 선택 후에도 macOS에서 추가 승인 창이 나타날 수 있습니다. 선택한 경로의 읽기·쓰기 권한을 무조건 보장하는 기능은 아닙니다.")
                         .font(.caption).foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("2. 최근 선택한 폴더").font(.headline)
+                GroupBox("최근 선택한 폴더") {
+                    VStack(alignment: .leading, spacing: 9) {
                     if permissions.selectedPaths.isEmpty {
                         Text("아직 선택한 폴더가 없습니다.").foregroundColor(.secondary)
                     } else {
@@ -1679,30 +1679,17 @@ struct FolderPermissionView: View {
                             }
                         }
                     }
-                    Text("이 목록은 사용자가 선택한 폴더를 기억하는 용도이며 macOS의 실제 권한 상태를 표시하지 않습니다.")
+                    Text("이 목록은 최근 선택한 경로이며 macOS 권한 상태를 의미하지 않습니다.")
                         .font(.caption2).foregroundColor(.secondary)
                     Text(permissions.notice).font(.caption).foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
-                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("3. macOS 개인정보 접근 권한 관리").font(.headline)
-                    HStack(spacing: 10) {
-                        Button("파일 및 폴더 설정 열기") { permissions.openFilesAndFoldersSettings() }
-                        Button("손쉬운 사용 설정 열기") { permissions.openAccessibilitySettings() }
-                    }
-                    Button("전체 디스크 접근 설정 열기 (선택 사항)") {
-                        permissions.openFullDiskAccessSettings()
-                    }
-                    Text("전체 디스크 접근은 일반적인 이미지·영상 변환에 필요하지 않습니다. 반드시 필요한 경우에만 Mac 시스템 설정에서 직접 승인하세요. macOS 버전에 따라 설정 화면의 위치가 다를 수 있습니다.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-
-                Text("참고: 현재 GitHub 앱은 임시 서명입니다. 앱을 새로 빌드해 설치하면 macOS가 접근 권한을 다시 요청할 수 있으며, 이 현상은 폴더 선택만으로 완전히 해결되지 않습니다.")
+                Text("macOS 파일 및 폴더·전체 디스크 접근 권한은 위의 '권한·로그인 항목 관리'에서 확인하세요.")
                     .font(.caption).foregroundColor(.secondary)
+                Text("GitHub 임시 서명 앱을 새로 설치하면 macOS가 접근 승인을 다시 요청할 수 있습니다.")
+                    .font(.caption2).foregroundColor(.secondary)
             }
-            .padding(22)
     }
 }
 
