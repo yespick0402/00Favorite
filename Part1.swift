@@ -1726,7 +1726,7 @@ class ToolWindowManager {
         activeWindows.append(win)
     }
     
-    // MAGNET-S3C: 긴 알림을 잘리지 않는 가변 높이 배너로 표시합니다.
+    // MAGNET-S3C-UI1: 문구 맞춤 배너 / 화면 하단 / 여러 줄 표시.
     // Finder 파일 드래그/단축키 이벤트에는 개입하지 않는 읽기 전용 알림입니다.
     func showBanner(message: String) {
         if !Thread.isMainThread {
@@ -1736,7 +1736,24 @@ class ToolWindowManager {
         bannerWindow?.close()
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
-        let bannerWidth = min(CGFloat(760), max(CGFloat(280), visible.width - 32))
+        // 문자 폭을 먼저 측정하고 긴 줄만 최대 570pt 안에서 자동 줄바꿈합니다.
+        // 종전의 무조건 760pt 고정 폭 때문에 생기던 좌우 빈 공간을 없앱니다.
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let longestLine = message.components(separatedBy: "\n")
+            .map { ($0 as NSString).size(withAttributes: attributes).width }
+            .max() ?? 0
+        let maxPanelWidth = max(CGFloat(160), visible.width - 24)
+        let maxTextWidth = max(CGFloat(100), min(CGFloat(570), maxPanelWidth - 70))
+        let textWidth = min(maxTextWidth, max(CGFloat(100), ceil(longestLine) + 6))
+        let bannerWidth = min(maxPanelWidth, textWidth + 66)
+        let measuredTextHeight = (message as NSString).boundingRect(
+            with: NSSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        ).height
+        let bannerHeight = min(max(CGFloat(48), visible.height - 24),
+                               max(CGFloat(48), ceil(max(CGFloat(24), measuredTextHeight)) + 24))
         let content = HStack(alignment: .top, spacing: 10) {
             if let customIcon = FileProcessor.customAppIconImage() {
                 Image(nsImage: customIcon)
@@ -1751,18 +1768,16 @@ class ToolWindowManager {
                 .foregroundColor(.primary)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: textWidth, alignment: .leading)
         }
-        .padding(.horizontal, 16).padding(.vertical, 14)
-        .frame(width: bannerWidth, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .shadow(radius: 8)
         let hosting = NSHostingView(rootView: content)
-        // 고정 52pt 높이를 없애고 실제 SwiftUI 텍스트의 줄바꿈 높이를 측정합니다.
-        let bannerHeight = max(CGFloat(56), hosting.fittingSize.height)
+        // Dock을 포함한 화면 아래쪽의 사용 가능 영역 위에 표시합니다.
         let panel = NSPanel(
             contentRect: NSRect(x: visible.midX - bannerWidth / 2,
-                                y: visible.maxY - bannerHeight - 12,
+                                y: visible.minY + 14,
                                 width: bannerWidth, height: bannerHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
