@@ -1866,6 +1866,7 @@ struct HelpAndSettingsView: View {
     @State private var launchAtLoginNotice: String = ""
     @State private var wheelMonitorStatus = "확인 전"
     @State private var wheelRecentDiagnostic = "아직 파일 드래그 시도 없음"
+    @State private var showingSetupCleanup = false
     
     let sampleDate: Date = {
         var comp = DateComponents()
@@ -1937,7 +1938,11 @@ struct HelpAndSettingsView: View {
                     .buttonStyle(.borderedProminent).tint(.orange)
             }
             .padding(14).background(.regularMaterial)
-        }.onAppear {
+        }
+         .sheet(isPresented: $showingSetupCleanup) {
+             FavoriteSetupCleanupView()
+         }
+         .onAppear {
              refreshWheelMonitorStatus()
              refreshLaunchAtLoginStatus()
          }
@@ -1973,6 +1978,16 @@ struct HelpAndSettingsView: View {
                 Text("고급 설정").font(.title3.bold()).foregroundColor(.orange)
                 Text("평상시에는 변경하지 않아도 됩니다. 휠 안전 모드는 기본 적용되며, 문제가 있을 때만 진단·재연결을 사용하세요.")
                     .font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("새 설치·삭제 전 정리", systemImage: "checkmark.shield")
+                        .font(.headline).foregroundColor(.orange)
+                    Text("새 앱 설치 후 권한 요청을 시작하거나, 앱 삭제 전 로그인 항목과 개인정보 보호 권한을 정리합니다. macOS 보안 권한의 최종 승인·해제는 사용자가 확인해야 합니다.")
+                        .font(.caption).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("설치·삭제 관리 열기…") { showingSetupCleanup = true }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(14).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 9) {
                     Label("시작프로그램", systemImage: "power")
                         .font(.headline).foregroundColor(.orange)
