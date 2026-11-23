@@ -366,7 +366,9 @@ struct FavoriteMagnetSettingsView: View {
                         Text("연결된 디스플레이: \(NSScreen.screens.count)대")
                     }
                     .font(.caption2).foregroundColor(.secondary)
-                    Text("2대 이상의 모니터가 연결되면 다음/이전 디스플레이로 창을 이동할 수 있습니다. 단축키는 원하는 조합으로 직접 지정하세요.")
+                    Text("모니터 이동 기본키: 다음 ⌃⌥⌘→ / 이전 ⌃⌥⌘←. 두 모니터라면 어느 쪽이든 반대쪽으로 이동합니다. 원하는 키로 변경할 수도 있습니다.")
+                        .font(.caption2).foregroundColor(.secondary)
+                    Text("현재 앱에서 다른 단축키와 겹치거나 macOS에 이미 예약된 경우 등록되지 않을 수 있습니다. 키보드 단축키 항목에서 확인·변경하세요.")
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 .padding(16)
