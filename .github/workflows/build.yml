@@ -3,11 +3,13 @@ name: Build 00Favorite App
 on:
   push:
     branches: [main, master]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261122-HK13-MAGNET-S2R1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3D-REPEAT-MAINT1-FIX1
 
 jobs:
   build:
@@ -24,9 +26,11 @@ jobs:
           set -euo pipefail
           test -s Part1.swift || { echo 'ERROR: Part1.swift 없음'; exit 1; }
           test -s Part2.swift || { echo 'ERROR: Part2.swift 없음'; exit 1; }
+          test -s MagnetSettings.swift || { echo 'ERROR: MagnetSettings.swift 없음'; exit 1; }
+          test -s SetupCleanup.swift || { echo 'ERROR: SetupCleanup.swift 없음'; exit 1; }
           test -s icon.png || { echo 'ERROR: icon.png 없음'; exit 1; }
           test -s icon_awake.png || { echo 'ERROR: icon_awake.png 없음'; exit 1; }
-          cat Part1.swift Part2.swift > combined_main.swift
+          cat Part1.swift Part2.swift MagnetSettings.swift SetupCleanup.swift > combined_main.swift
           # Swift 구문 검사로는 SDK 이름 변경 오류를 검출할 수 없으므로 구형 상수를 차단합니다.
           if grep -nF 'kCFRunLoopCommonModes' combined_main.swift; then
             echo 'ERROR: 구형 CoreFoundation 상수. CFRunLoopMode.commonModes를 사용하세요.' >&2
@@ -86,6 +90,167 @@ jobs:
           assert '#selector(toggleWindowSnapDragEnabled)' in src, 'ERROR: menu toggle missing'
           print('MAGNET-S2 passive mouse drag / overlay / wheel isolation: VERIFIED')
           PY_WINDOW_SNAP
+          # MAGNET-S3A: global hotkeys must use Carbon, never an extra event tap.
+          python3 - <<'PY_MAGNET_S3A'
+          from pathlib import Path
+          src = Path('Part2.swift').read_text()
+          required = [
+              'final class FavoriteWindowSnapHotKeys: NSObject',
+              'RegisterEventHotKey(binding.code, binding.modifiers',
+              'UnregisterEventHotKey(ref)',
+              'FavoriteWindowSnapHotKeys.shared.start()',
+              'FavoriteWindowSnapHotKeys.shared.stop()',
+              'FavoriteWindowSnapHotKeys.shared.refresh()',
+              'func recordInSettings(',
+              'FavoriteAwakeHotKey.shared.suspendForRecorder()',
+              'FavoriteAwakeHotKey.shared.resumeAfterRecorder()',
+              'favorite_magnet_s3a_shortcuts_v1',
+          ]
+          missing = [item for item in required if item not in src]
+          if missing: raise SystemExit('ERROR: MAGNET-S3A incomplete: ' + ', '.join(missing))
+          assert src.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder wheel event tap count changed'
+          required_settings = [
+              'FavoriteMagnetSettingsView()', 'final class FavoriteMagnetPreferences',
+              'favorite_magnet_settings_drag_areas_v1',
+              'FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()',
+              'FavoriteMagnetPreferences.shared.layoutForEdge(',
+              'case maximize, center, restore, centerTwoThirds',
+              'Binding(code: 36, modifiers: two, keyLabel: "↩")', 'event.keyCode != 53 else',
+              '창 정렬 설정…'
+          ]
+          combined = Path('combined_main.swift').read_text()
+          missing_settings = [x for x in required_settings if x not in combined]
+          if missing_settings: raise SystemExit('ERROR: MAGNET-S3B incomplete: ' + ', '.join(missing_settings))
+          print('MAGNET-S3B Korean settings / Enter shortcut / drag area: VERIFIED')
+          PY_MAGNET_S3A
+          # MAGNET-S3C: multiline-safe banner and multi-display navigation must remain independent.
+          python3 - <<'PY_MAGNET_S3C'
+          from pathlib import Path
+          source1 = Path('Part1.swift').read_text()
+          source2 = Path('Part2.swift').read_text()
+          pref = Path('MagnetSettings.swift').read_text()
+          banner = [
+              'func showBanner(message: String)', 'measuredTextHeight',
+              'fixedSize(horizontal: false, vertical: true)',
+              'frame(width: textWidth, alignment: .leading)',
+              'visible.minY + 14', 'self.bannerWindow === panel',
+              'panel.ignoresMouseEvents = true',
+          ]
+          screen = [
+              'case maximize, center, restore, centerTwoThirds, nextDisplay, previousDisplay',
+              'private func adjacentDisplay(from current: NSScreen, forward: Bool)',
+              'private func mappedFrame(_ current: CGRect, from source: CGRect, to dest: CGRect)',
+              'layout == .nextDisplay || layout == .previousDisplay',
+              'NSScreen.screens.count > 1',
+              '("다음 디스플레이", .nextDisplay)',
+              '("이전 디스플레이", .previousDisplay)',
+          ]
+          ui = [
+              '("디스플레이 이동", [(.nextDisplay, "다음 디스플레이")',
+              'case .nextDisplay, .previousDisplay:',
+              '연결된 디스플레이:',
+          ]
+          for group, source, needles in [
+              ('banner', source1, banner), ('display', source2, screen),
+              ('settings', pref, ui),
+          ]:
+              missing = [needle for needle in needles if needle not in source]
+              if missing: raise SystemExit(f'ERROR: MAGNET-S3C {group} incomplete: {missing}')
+          assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: second Finder event tap introduced'
+          assert 'guard movedWindow else { return }' in source2, 'ERROR: titlebar movement safety removed'
+          # S3C-FIX1: Right-side windows MUST move to target origin before expanding.
+          code = source2.split('private func setFrame(_ cocoaRect: CGRect, for window: AXUIElement)', 1)[1]
+          code = code.split('private var primaryScreenTop', 1)[0]
+          first_position = code.index('AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)')
+          first_size = code.index('AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)')
+          assert first_position < first_size, 'ERROR: maximize must position first, then resize'
+          assert 'let corrected = readFrame(window)' in code, 'ERROR: bounded second resize verification missing'
+          assert code.count('let corrected = readFrame(window)') == 1, 'ERROR: resize retry must be bounded'
+          assert 'bannerWidth = min(maxPanelWidth, textWidth + 66)' in source1
+          assert 'visible.maxY - bannerHeight - 12' not in source1, 'ERROR: banner still top-aligned'
+          # UI2: only a single clipped rounded fill; no translucent shadow outside the panel.
+          banner_code = source1.split('func showBanner(message: String) {', 1)[1].split('func showRenameReviewWindow', 1)[0]
+          for marker in [
+              'RoundedRectangle(cornerRadius: 14, style: .continuous)',
+              '.fill(Color(nsColor: NSColor.windowBackgroundColor))',
+              '.clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))',
+              'hosting.layer?.masksToBounds = true',
+          ]:
+              assert marker in banner_code, f'ERROR: banner rounded clipping missing: {marker}'
+          assert '.shadow(radius:' not in banner_code, 'ERROR: clipped toast shadow reintroduced'
+          assert '.background(.regularMaterial' not in banner_code, 'ERROR: translucent corner artifacts reintroduced'
+          print('MAGNET-S3C UI1/FIX1 text-fit bottom banner / right-origin maximize: VERIFIED')
+          # S3-D: repeating standard half-snap keys on an edge crosses to the adjacent display.
+          required_repeat = [
+              'if layout == .rightHalf || layout == .leftHalf {',
+              'let alreadySnapped = matchesWindowFrame(current, target: target)',
+              'horizontalNeighbor(from: screen, toRight: layout == .rightHalf)',
+              'let incoming: Layout = layout == .rightHalf ? .leftHalf : .rightHalf',
+              'private func horizontalNeighbor(from current: NSScreen, toRight: Bool)',
+              'private func matchesWindowFrame(_ actual: CGRect, target: CGRect)',
+              'let tolerance: CGFloat = 24',
+          ]
+          missing_repeat = [marker for marker in required_repeat if marker not in source2]
+          if missing_repeat: raise SystemExit('ERROR: S3-D repeat-snap missing: ' + ', '.join(missing_repeat))
+          assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder CGEventTap isolation changed'
+          assert 'favorite_magnet_s3d_display_hotkeys_default_v1' not in source2, 'ERROR: unwanted extra hotkey migration'
+          hotkeys = source2.split('final class FavoriteWindowSnapHotKeys:', 1)[1]
+          assert '(.leftHalf, Binding(code: 123, modifiers: two, keyLabel: "←"))' in hotkeys
+          assert '(.rightHalf, Binding(code: 124, modifiers: two, keyLabel: "→"))' in hotkeys
+          assert '(.nextDisplay, Binding(code: 124, modifiers: three' not in hotkeys
+          assert '(.previousDisplay, Binding(code: 123, modifiers: three' not in hotkeys
+          setting = Path('MagnetSettings.swift').read_text()
+          assert '한 번 더 누르면 오른쪽 모니터 왼쪽 절반' in setting, 'ERROR: shortcut help missing'
+          assert '한 번 더 누르면 왼쪽 모니터 오른쪽 절반' in setting, 'ERROR: reverse shortcut help missing'
+          # Confirm crossing happens before ordinary snap, and original position is saved once.
+          repeat = source2.split('// MAGNET-S3D: 같은 정렬 키를 반복하면', 1)[1]
+          repeat = repeat.split('return setFrame(target, for: window)', 1)[0]
+          assert repeat.index('horizontalNeighbor(') < repeat.index('if key == nil')
+          assert 'originals[pid, default: []].append(OriginalWindow(window: window, frame: current))' in repeat
+          print('MAGNET-S3D repeated half-snap edge crossing / symmetric target / original restore: VERIFIED')
+          PY_MAGNET_S3C
+          # MAINT1: only current app bundle ID, explicit action, no privilege escalation or other-app TCC reset.
+          python3 - <<'PY_FAVORITE_MAINT1'
+          from pathlib import Path
+          source = Path('SetupCleanup.swift').read_text()
+          first = Path('Part1.swift').read_text()
+          required = [
+              'static let expectedBundleID = "win.yespick.00favorite"',
+              'Bundle.main.bundleIdentifier == expectedBundleID',
+              'process.executableURL = executable',
+              'process.arguments = ["reset", "All", expectedBundleID]',
+              'FavoriteLaunchAtLogin.setRegistered(false)',
+              'CGRequestListenEventAccess()',
+              'AXIsProcessTrustedWithOptions(options)',
+              'alert.runModal() == .alertFirstButtonReturn',
+              'UserDefaults.standard.removePersistentDomain(forName: expectedBundleID)',
+              'static func resetPrivacyForCurrentApp()',
+              'func showBanner(message: String)',
+          ]
+          combined = source + first
+          missing = [marker for marker in required if marker not in combined]
+          if missing:
+              raise SystemExit('ERROR: MAINT1 missing safety requirements: ' + ', '.join(missing))
+          forbidden = [
+              '/bin/sh', 'sqlite3', 'TCC.db', 'killall tccd',
+              'process.arguments = ["reset", "All"]',
+              'rm -rf', 'system("',
+          ]
+          unsafe = [word for word in forbidden if word in source]
+          if unsafe:
+              raise SystemExit('ERROR: MAINT1 forbidden unsafe operation: ' + ', '.join(unsafe))
+          assert 'FavoriteSetupCleanupView()' in first
+          assert first.count('CGEvent.tapCreate(') == 0
+          # MAINT1-FIX1: the maintenance sheet must have a real, always-visible close action.
+          assert '@Environment(\\.dismiss) private var dismiss' in source, 'ERROR: sheet dismiss environment missing'
+          assert 'Button("닫기") { dismiss() }' in source, 'ERROR: Korean close button missing'
+          assert '.keyboardShortcut(.cancelAction)' in source, 'ERROR: Escape close shortcut missing'
+          assert '.accessibilityLabel("설치·삭제 관리 닫기")' in source, 'ERROR: accessible close action missing'
+          assert source.index('Button("닫기") { dismiss() }') < source.index('ScrollView {'), 'ERROR: close must remain outside scroll'
+          assert 'process.arguments = ["reset", "All", expectedBundleID]' in source, 'ERROR: app-specific privacy reset altered'
+          print('MAINT1-FIX1 persistent close button / Escape / permission isolation: VERIFIED')
+          print('MAINT1 targeted consent/reset, safe confirmation and setup sheet: VERIFIED')
+          PY_FAVORITE_MAINT1
           # Swift 6.1+ rejects as? on opaque CoreFoundation AX types.
           # Read the actual CFTypeID, then cast explicitly; fail early with a clear message.
           python3 - <<'PY_AX_CAST'
@@ -352,6 +517,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-HK13-MAGNET-S2-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3D-REPEAT-MAINT1-FIX1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error

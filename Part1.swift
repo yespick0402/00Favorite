@@ -1726,26 +1726,86 @@ class ToolWindowManager {
         activeWindows.append(win)
     }
     
+    // MAGNET-S3C-UI2: 문구 맞춤 하단 배너의 그림자 잘림/모서리 아티팩트 수정.
+    // Finder 파일 드래그/단축키 이벤트에는 개입하지 않는 읽기 전용 알림입니다.
     func showBanner(message: String) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.showBanner(message: message) }
+            return
+        }
         bannerWindow?.close()
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 52), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false; panel.backgroundColor = .clear; panel.level = .statusBar
-        if let screen = NSScreen.main { panel.setFrameOrigin(NSPoint(x: screen.frame.midX - 220, y: screen.frame.maxY - 90)) }
-        panel.contentView = NSHostingView(rootView:
-            HStack(spacing: 10) {
-                if let customIcon = FileProcessor.customAppIconImage() {
-                    Image(nsImage: customIcon).resizable().scaledToFit().frame(width: 24, height: 24)
-                } else {
-                    Image(systemName: "checkmark.circle.fill").foregroundColor(.orange).font(.title2)
-                }
-                Text(message).font(.system(size: 13, weight: .semibold)).foregroundColor(.primary)
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let visible = screen.visibleFrame
+        // 문자 폭을 먼저 측정하고 긴 줄만 최대 570pt 안에서 자동 줄바꿈합니다.
+        // 종전의 무조건 760pt 고정 폭 때문에 생기던 좌우 빈 공간을 없앱니다.
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let longestLine = message.components(separatedBy: "\n")
+            .map { ($0 as NSString).size(withAttributes: attributes).width }
+            .max() ?? 0
+        let maxPanelWidth = max(CGFloat(160), visible.width - 24)
+        let maxTextWidth = max(CGFloat(100), min(CGFloat(570), maxPanelWidth - 70))
+        let textWidth = min(maxTextWidth, max(CGFloat(100), ceil(longestLine) + 6))
+        let bannerWidth = min(maxPanelWidth, textWidth + 66)
+        let measuredTextHeight = (message as NSString).boundingRect(
+            with: NSSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        ).height
+        let bannerHeight = min(max(CGFloat(48), visible.height - 24),
+                               max(CGFloat(48), ceil(max(CGFloat(24), measuredTextHeight)) + 24))
+        let content = HStack(alignment: .top, spacing: 10) {
+            if let customIcon = FileProcessor.customAppIconImage() {
+                Image(nsImage: customIcon)
+                    .resizable().scaledToFit().frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 21)).foregroundColor(.orange)
+                    .frame(width: 24, height: 24)
             }
-            .padding(.horizontal, 18).padding(.vertical, 12).background(.regularMaterial, in: Capsule()).shadow(radius: 10)
+            Text(message)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: textWidth, alignment: .leading)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        // NSPanel의 투명 경계에서 material+blur shadow가 잘리며 사각 잔상을 남기던 원인 제거.
+        // 단일 불투명 라운드 배경만 그려 모서리 픽셀을 깔끔하게 유지합니다.
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: NSColor.windowBackgroundColor))
         )
-        panel.orderFrontRegardless(); bannerWindow = panel
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) { panel.close() }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        let hosting = NSHostingView(rootView: content)
+        hosting.wantsLayer = true
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
+        hosting.layer?.masksToBounds = true
+        // Dock을 포함한 화면 아래쪽의 사용 가능 영역 위에 표시합니다.
+        let panel = NSPanel(
+            contentRect: NSRect(x: visible.midX - bannerWidth / 2,
+                                y: visible.minY + 14,
+                                width: bannerWidth, height: bannerHeight),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .statusBar
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+        panel.contentView = hosting
+        panel.orderFrontRegardless()
+        bannerWindow = panel
+        let seconds: TimeInterval = message.count >= 65 ? 6.0 : 3.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self, weak panel] in
+            guard let self = self, let panel = panel,
+                  self.bannerWindow === panel else { return }
+            panel.close()
+            self.bannerWindow = nil
+        }
     }
-    
+
     func showRenameReviewWindow(urls: [URL]) {
         openWindow(title: "촬영일시 근거 확인 후 이름 변경", view: RenameReviewView(files: urls), size: NSSize(width: 860, height: 670), minSize: NSSize(width: 690, height: 520))
     }
@@ -1829,6 +1889,7 @@ struct HelpAndSettingsView: View {
     @State private var launchAtLoginNotice: String = ""
     @State private var wheelMonitorStatus = "확인 전"
     @State private var wheelRecentDiagnostic = "아직 파일 드래그 시도 없음"
+    @State private var showingSetupCleanup = false
     
     let sampleDate: Date = {
         var comp = DateComponents()
@@ -1857,6 +1918,7 @@ struct HelpAndSettingsView: View {
                     Text("🏷️ 이름 변환 양식").tag(1)
                     Text("📖 사용 설명서").tag(2)
                     Text("⚙️ 고급 설정").tag(3)
+                    Text("🧲 창 정렬").tag(4)
                 }.labelsHidden().pickerStyle(.segmented)
             }
             .padding(18).background(.regularMaterial)
@@ -1868,6 +1930,8 @@ struct HelpAndSettingsView: View {
                 renamePatternTab
             } else if selectedTab == 3 {
                 advancedTab
+            } else if selectedTab == 4 {
+                FavoriteMagnetSettingsView()
             } else {
                 usageGuideTab
             }
@@ -1877,21 +1941,31 @@ struct HelpAndSettingsView: View {
                 Text("💡 수천 개의 파일을 한 번에 드래그해도 누락 없이 백그라운드에서 초고속으로 처리됩니다.")
                     .font(.caption).foregroundColor(.secondary)
                 Spacer()
-                Button("기본 설정 복원") {
+                Button(selectedTab == 4 ? "창 정렬 기본 단축키 복원" : "기본 설정 복원") {
                     stopRecording()
-                    settings.resetToFavoriteDefaults()
-                    settings.renamePattern = ShortcutSettings.defaultRenamePattern
-                    _ = FavoriteAwakeHotKey.shared.changePreset(.controlOptionPeriod)
-                    FavoriteAwakeHotKey.shared.setToggleMinutes(60)
-                    awakeMinutes = FavoriteAwakeHotKey.shared.toggleMinutes
-                    (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
-                    FileProcessor.showToast("단축키 및 작동 방식이 기본값으로 복원되었습니다.")
+                    if selectedTab == 4 {
+                        FavoriteWindowSnapHotKeys.shared.restoreMagnetDefaults()
+                        FavoriteMagnetPreferences.shared.notify()
+                        FileProcessor.showToast("창 정렬 기본 단축키가 복원되었습니다.")
+                    } else {
+                        settings.resetToFavoriteDefaults()
+                        settings.renamePattern = ShortcutSettings.defaultRenamePattern
+                        _ = FavoriteAwakeHotKey.shared.changePreset(.controlOptionPeriod)
+                        FavoriteAwakeHotKey.shared.setToggleMinutes(60)
+                        awakeMinutes = FavoriteAwakeHotKey.shared.toggleMinutes
+                        (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+                        FileProcessor.showToast("단축키 및 작동 방식이 기본값으로 복원되었습니다.")
+                    }
                 }
                 Button("닫기") { stopRecording(); stopAwakeRecording(); NSApp.keyWindow?.close() }
                     .buttonStyle(.borderedProminent).tint(.orange)
             }
             .padding(14).background(.regularMaterial)
-        }.onAppear {
+        }
+         .sheet(isPresented: $showingSetupCleanup) {
+             FavoriteSetupCleanupView()
+         }
+         .onAppear {
              refreshWheelMonitorStatus()
              refreshLaunchAtLoginStatus()
          }
@@ -1900,7 +1974,7 @@ struct HelpAndSettingsView: View {
              refreshLaunchAtLoginStatus()
          }
          .onReceive(NotificationCenter.default.publisher(for: ToolWindowManager.settingsNavigation)) { note in
-             if let newTab = note.userInfo?["tab"] as? Int, (0...3).contains(newTab) {
+             if let newTab = note.userInfo?["tab"] as? Int, (0...4).contains(newTab) {
                  selectedTab = newTab
              }
          }
@@ -1927,6 +2001,16 @@ struct HelpAndSettingsView: View {
                 Text("고급 설정").font(.title3.bold()).foregroundColor(.orange)
                 Text("평상시에는 변경하지 않아도 됩니다. 휠 안전 모드는 기본 적용되며, 문제가 있을 때만 진단·재연결을 사용하세요.")
                     .font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("새 설치·삭제 전 정리", systemImage: "checkmark.shield")
+                        .font(.headline).foregroundColor(.orange)
+                    Text("새 앱 설치 후 권한 요청을 시작하거나, 앱 삭제 전 로그인 항목과 개인정보 보호 권한을 정리합니다. macOS 보안 권한의 최종 승인·해제는 사용자가 확인해야 합니다.")
+                        .font(.caption).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("설치·삭제 관리 열기…") { showingSetupCleanup = true }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(14).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 9) {
                     Label("시작프로그램", systemImage: "power")
                         .font(.headline).foregroundColor(.orange)

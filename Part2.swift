@@ -2535,7 +2535,7 @@ final class FavoriteWindowSnap {
         case leftHalf = 1, rightHalf, topHalf, bottomHalf
         case topLeft, topRight, bottomLeft, bottomRight
         case leftThird, middleThird, rightThird, leftTwoThirds, rightTwoThirds
-        case maximize, center, restore
+        case maximize, center, restore, centerTwoThirds, nextDisplay, previousDisplay // 기존 rawValue 유지; 이동 명령은 끝에 추가
     }
 
     private struct OriginalWindow {
@@ -2602,7 +2602,33 @@ final class FavoriteWindowSnap {
         }
 
         guard let screen = screenContaining(current) else { return "창을 표시할 모니터를 찾지 못했습니다." }
-        let target = layoutFrame(layout, visible: screen.visibleFrame, current: current)
+        // MAGNET-S3C: 현재 창의 위치/크기를 유지한 채 물리적으로 인접한 디스플레이로 이동.
+        if layout == .nextDisplay || layout == .previousDisplay {
+            guard let destination = adjacentDisplay(from: screen, forward: layout == .nextDisplay) else {
+                return "연결된 디스플레이가 하나뿐입니다. 두 번째 모니터 연결 후 사용할 수 있습니다."
+            }
+            let target = mappedFrame(current, from: screen.visibleFrame, to: destination.visibleFrame)
+            if key == nil {
+                originals[pid, default: []].append(OriginalWindow(window: window, frame: current))
+            }
+            return setFrame(target, for: window)
+        }
+        var target = FavoriteMagnetPreferences.shared.customFrame(layout, visible: screen.visibleFrame)
+            ?? layoutFrame(layout, visible: screen.visibleFrame, current: current)
+
+        // MAGNET-S3D: 같은 정렬 키를 반복하면 물리적으로 인접한 모니터로 넘어갑니다.
+        // 1번 오른쪽 절반 + ⌃⌥→ 다시 입력 → 2번 왼쪽 절반.
+        // 2번 왼쪽 절반 + ⌃⌥← 다시 입력 → 1번 오른쪽 절반.
+        // 첫 입력, 단일 모니터, 모니터 바깥 끝에서는 종전 절반 정렬을 유지합니다.
+        if layout == .rightHalf || layout == .leftHalf {
+            let alreadySnapped = matchesWindowFrame(current, target: target)
+            if alreadySnapped,
+               let next = horizontalNeighbor(from: screen, toRight: layout == .rightHalf) {
+                let incoming: Layout = layout == .rightHalf ? .leftHalf : .rightHalf
+                target = FavoriteMagnetPreferences.shared.customFrame(incoming, visible: next.visibleFrame)
+                    ?? layoutFrame(incoming, visible: next.visibleFrame, current: current)
+            }
+        }
         if key == nil { originals[pid, default: []].append(OriginalWindow(window: window, frame: current)) }
         return setFrame(target, for: window)
     }
@@ -2694,17 +2720,21 @@ final class FavoriteWindowSnap {
         let right = pointer.x >= f.maxX - zone
         let top = pointer.y >= f.maxY - zone
         let bottom = pointer.y <= f.minY + zone
-        let layout: Layout
-        if left && top { layout = .topLeft }
-        else if right && top { layout = .topRight }
-        else if left && bottom { layout = .bottomLeft }
-        else if right && bottom { layout = .bottomRight }
-        else if left { layout = .leftHalf }
-        else if right { layout = .rightHalf }
-        else if top { layout = .maximize }
-        else if bottom { layout = .bottomHalf }
-        else { return nil }
-        return (layout, layoutFrame(layout, visible: v, current: current))
+        let edge: FavoriteMagnetPreferences.Edge?
+        if left && top { edge = .upperLeft }
+        else if right && top { edge = .upperRight }
+        else if left && bottom { edge = .lowerLeft }
+        else if right && bottom { edge = .lowerRight }
+        else if left { edge = .left }
+        else if right { edge = .right }
+        else if top { edge = .upper }
+        else if bottom { edge = .lower }
+        else { edge = nil }
+        guard let zoneEdge = edge,
+              let layout = FavoriteMagnetPreferences.shared.layoutForEdge(zoneEdge) else { return nil }
+        let target = FavoriteMagnetPreferences.shared.customFrame(layout, visible: v)
+            ?? layoutFrame(layout, visible: v, current: current)
+        return (layout, target)
     }
 
     // 원래 크기 복원을 위해 마우스를 누르기 전 창 프레임을 저장합니다.
@@ -2754,16 +2784,25 @@ final class FavoriteWindowSnap {
         var pos = CGPoint(x: rect.minX, y: primaryScreenTop - rect.maxY)
         guard let sizeValue = AXValueCreate(.cgSize, &size),
               let pointValue = AXValueCreate(.cgPoint, &pos) else { return "창 정렬 위치를 계산하지 못했습니다." }
-        // 크기를 먼저 정하고 위치를 두 번 지정하여 앱별 최소 크기 보정에 대응합니다.
+        // MAGNET-S3C-FIX1: 오른쪽 절반/우상단/우하단에서 최대화할 때
+        // 크기를 먼저 키우면 Chrome 등의 앱이 오른쪽 화면 경계에서 폭을 제한합니다.
+        // 반드시 목표 위치로 먼저 옮긴 다음 크기를 변경하고 마지막에 위치를 재확인합니다.
+        _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
         let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
         let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
         if sizeResult != .success || positionResult != .success {
             return "이 창은 크기 또는 위치 변경을 허용하지 않습니다. (크기: \(sizeResult.rawValue), 위치: \(positionResult.rawValue))"
         }
-        _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+        // 일부 앱은 첫 번째 크기 조정 시 과도기적인 제약을 적용합니다.
+        // 목표 위치를 유지한 채 딱 한 번만 재조정하여 무한 반복을 방지합니다.
         if let actual = readFrame(window),
            abs(actual.width - rect.width) > 24 || abs(actual.height - rect.height) > 24 {
-            return "창이 지원하는 최소/최대 크기 제한으로 요청한 크기와 다르게 배치됐습니다."
+            _ = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+            _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+            if let corrected = readFrame(window),
+               abs(corrected.width - rect.width) > 24 || abs(corrected.height - rect.height) > 24 {
+                return "창이 지원하는 최소/최대 크기 제한으로 요청한 크기와 다르게 배치됐습니다."
+            }
         }
         return nil
     }
@@ -2789,6 +2828,58 @@ final class FavoriteWindowSnap {
         })
     }
 
+    // 반복 좌우 정렬은 화면의 실제 배치를 따릅니다. 끝에서는 순환하지 않습니다.
+    // 1pt 이하 차이는 같은 x 위치로 취급하여 같은 열의 화면을 잘못 선택하지 않습니다.
+    private func horizontalNeighbor(from current: NSScreen, toRight: Bool) -> NSScreen? {
+        let other = NSScreen.screens.filter { screen in
+            toRight ? screen.frame.midX > current.frame.midX + 1
+                    : screen.frame.midX < current.frame.midX - 1
+        }
+        return other.min { lhs, rhs in
+            let xA = abs(lhs.frame.midX - current.frame.midX)
+            let xB = abs(rhs.frame.midX - current.frame.midX)
+            if abs(xA - xB) > 1 { return xA < xB }
+            return abs(lhs.frame.midY - current.frame.midY) <
+                   abs(rhs.frame.midY - current.frame.midY)
+        }
+    }
+
+    private func matchesWindowFrame(_ actual: CGRect, target: CGRect) -> Bool {
+        // AX 접근성 API는 앱별 최소 크기 및 반올림으로 몇 pt의 오차가 날 수 있습니다.
+        let tolerance: CGFloat = 24
+        return abs(actual.minX - target.minX) <= tolerance &&
+               abs(actual.minY - target.minY) <= tolerance &&
+               abs(actual.width - target.width) <= tolerance &&
+               abs(actual.height - target.height) <= tolerance
+    }
+
+    // 디스플레이 배열의 API 순서 대신 실제 화면상의 좌→우, 동률이면 위→아래 순서 사용.
+    // 별도의 다음/이전 디스플레이 메뉴 명령은 기존처럼 마지막 화면에서 순환합니다.
+    private func adjacentDisplay(from current: NSScreen, forward: Bool) -> NSScreen? {
+        let ordered = NSScreen.screens.sorted { a, b in
+            if a.frame.midX != b.frame.midX { return a.frame.midX < b.frame.midX }
+            return a.frame.midY > b.frame.midY
+        }
+        guard ordered.count > 1,
+              let index = ordered.firstIndex(where: { $0.frame == current.frame }) else { return nil }
+        let shift = forward ? 1 : ordered.count - 1
+        return ordered[(index + shift) % ordered.count]
+    }
+
+    // 물리적으로 다른 해상도/배율의 모니터에서도 원래 창 크기 및 상대 위치를 최대한 보존.
+    // 이동할 모니터가 작으면 보이는 영역 안으로 크기와 위치를 안전하게 제한합니다.
+    private func mappedFrame(_ current: CGRect, from source: CGRect, to dest: CGRect) -> CGRect {
+        let width = min(max(CGFloat(1), current.width), dest.width)
+        let height = min(max(CGFloat(1), current.height), dest.height)
+        let spanX = max(CGFloat(1), source.width - current.width)
+        let spanY = max(CGFloat(1), source.height - current.height)
+        let xFraction = min(CGFloat(1), max(CGFloat(0), (current.minX - source.minX) / spanX))
+        let yFraction = min(CGFloat(1), max(CGFloat(0), (source.maxY - current.maxY) / spanY))
+        return CGRect(x: dest.minX + xFraction * max(0, dest.width - width),
+                      y: dest.maxY - height - yFraction * max(0, dest.height - height),
+                      width: width, height: height).integral
+    }
+
     private func layoutFrame(_ layout: Layout, visible v: CGRect, current c: CGRect) -> CGRect {
         let w = v.width, h = v.height
         let halfW = floor(w / 2), halfH = floor(h / 2), thirdW = floor(w / 3)
@@ -2806,11 +2897,12 @@ final class FavoriteWindowSnap {
         case .rightThird:    return CGRect(x: v.minX + 2 * thirdW, y: v.minY, width: w - 2 * thirdW, height: h)
         case .leftTwoThirds: return CGRect(x: v.minX, y: v.minY, width: 2 * thirdW, height: h)
         case .rightTwoThirds:return CGRect(x: v.minX + thirdW, y: v.minY, width: w - thirdW, height: h)
+        case .centerTwoThirds: return CGRect(x: v.minX + w / 6, y: v.minY, width: w * 2 / 3, height: h)
         case .maximize:      return v
         case .center:
             let size = CGSize(width: min(c.width, w), height: min(c.height, h))
             return CGRect(x: v.midX - size.width / 2, y: v.midY - size.height / 2, width: size.width, height: size.height)
-        case .restore:       return c
+        case .restore, .nextDisplay, .previousDisplay: return c
         }
     }
 }
@@ -2992,6 +3084,322 @@ final class FavoriteWindowSnapDrag {
     }
 }
 
+// MARK: - MAGNET-S3A: 창 정렬 전용 macOS 등록형 전역 단축키
+// Finder 휠의 읽기 전용 이벤트 탭 및 잠자기 방지 핫키와는 다른 서명으로 독립 등록합니다.
+// MAGNET 기본 키 조합을 1회만 채웁니다. 이미 저장된 사용자 단축키는 덮어쓰지 않습니다.
+final class FavoriteWindowSnapHotKeys: NSObject {
+    static let shared = FavoriteWindowSnapHotKeys()
+    private static let signature: OSType = 0x46575333 // 'FWS3' (Awake의 '00FV'와 구별)
+    private static let storageKey = "favorite_magnet_s3a_shortcuts_v1"
+
+    private struct Binding: Codable {
+        let code: UInt32
+        let modifiers: UInt32
+        let keyLabel: String
+        var label: String {
+            var value = ""
+            if modifiers & UInt32(controlKey) != 0 { value += "⌃" }
+            if modifiers & UInt32(optionKey) != 0 { value += "⌥" }
+            if modifiers & UInt32(shiftKey) != 0 { value += "⇧" }
+            if modifiers & UInt32(cmdKey) != 0 { value += "⌘" }
+            return value + keyLabel
+        }
+    }
+
+    private let layouts: [(FavoriteWindowSnap.Layout, String)] = [
+        (.leftHalf, "왼쪽 절반"), (.rightHalf, "오른쪽 절반"),
+        (.topHalf, "위쪽 절반"), (.bottomHalf, "아래쪽 절반"),
+        (.topLeft, "왼쪽 위"), (.topRight, "오른쪽 위"),
+        (.bottomLeft, "왼쪽 아래"), (.bottomRight, "오른쪽 아래"),
+        (.leftThird, "왼쪽 1/3"), (.middleThird, "가운데 1/3"),
+        (.rightThird, "오른쪽 1/3"), (.leftTwoThirds, "왼쪽 2/3"),
+        (.rightTwoThirds, "오른쪽 2/3"), (.centerTwoThirds, "가운데 2/3"),
+        (.maximize, "최대 크기"),
+        (.center, "가운데 배치"), (.restore, "원래 위치 복원"),
+        (.nextDisplay, "다음 디스플레이"), (.previousDisplay, "이전 디스플레이")
+    ]
+    // 사진에 표시된 Magnet 기본 키 조합: Control+Option [+Command] + 문자/화살표.
+    // macOS 가상 키 코드(ANSI)를 사용하며 기존 잠자기 방지 Ctrl+Option+.과 겹치지 않습니다.
+    private static func magnetDefaults() -> [(FavoriteWindowSnap.Layout, Binding)] {
+        let two = UInt32(controlKey) | UInt32(optionKey)
+        let three = two | UInt32(cmdKey)
+        return [
+            (.leftHalf, Binding(code: 123, modifiers: two, keyLabel: "←")),
+            (.rightHalf, Binding(code: 124, modifiers: two, keyLabel: "→")),
+            (.topHalf, Binding(code: 126, modifiers: two, keyLabel: "↑")),
+            (.bottomHalf, Binding(code: 125, modifiers: two, keyLabel: "↓")),
+            (.topLeft, Binding(code: 32, modifiers: three, keyLabel: "U")),
+            (.topRight, Binding(code: 34, modifiers: three, keyLabel: "I")),
+            (.bottomLeft, Binding(code: 38, modifiers: three, keyLabel: "J")),
+            (.bottomRight, Binding(code: 40, modifiers: three, keyLabel: "K")),
+            (.leftThird, Binding(code: 2, modifiers: two, keyLabel: "D")),
+            (.middleThird, Binding(code: 3, modifiers: three, keyLabel: "F")),
+            (.rightThird, Binding(code: 5, modifiers: two, keyLabel: "G")),
+            (.leftTwoThirds, Binding(code: 14, modifiers: three, keyLabel: "E")),
+            (.centerTwoThirds, Binding(code: 15, modifiers: three, keyLabel: "R")),
+            (.rightTwoThirds, Binding(code: 17, modifiers: three, keyLabel: "T")),
+            (.maximize, Binding(code: 36, modifiers: two, keyLabel: "↩")),
+            (.center, Binding(code: 8, modifiers: two, keyLabel: "C")),
+            (.restore, Binding(code: 51, modifiers: two, keyLabel: "⌫"))
+        ]
+    }
+    private var bindings: [String: Binding] = [:]
+    private var refs: [Int: EventHotKeyRef] = [:]
+    private var handlerRef: EventHandlerRef?
+    private var active = false
+    private var failedLayouts = Set<Int>()
+    private override init() {
+        super.init()
+        if let saved = UserDefaults.standard.data(forKey: Self.storageKey),
+           let decoded = try? PropertyListDecoder().decode([String: Binding].self, from: saved) {
+            bindings = decoded
+        }
+        // S3-A에서 사용자 키를 저장했다면 보존하고 미지정 항목만 채웁니다.
+        let migrationKey = "favorite_magnet_s3b_defaults_applied_v1"
+        if !UserDefaults.standard.bool(forKey: migrationKey) {
+            for (layout, preset) in Self.magnetDefaults() {
+                let key = String(layout.rawValue)
+                let used = bindings.values.contains {
+                    $0.code == preset.code && $0.modifiers == preset.modifiers
+                }
+                if bindings[key] == nil && !used { bindings[key] = preset }
+            }
+            persist()
+            UserDefaults.standard.set(true, forKey: migrationKey)
+        }
+    }
+
+    private static let callback: EventHandlerUPP = { _, event, _ in
+        guard let event = event else { return OSStatus(eventNotHandledErr) }
+        var identifier = EventHotKeyID()
+        let status = GetEventParameter(
+            event, UInt32(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+            nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier
+        )
+        guard status == noErr, identifier.signature == FavoriteWindowSnapHotKeys.signature,
+              let layout = FavoriteWindowSnap.Layout(rawValue: Int(identifier.id)) else {
+            return OSStatus(eventNotHandledErr)
+        }
+        // 단축키는 원래 활성 앱의 창을 대상으로 합니다. 키/마우스 이벤트를 가로채지 않습니다.
+        DispatchQueue.main.async {
+            guard FavoriteWindowSnap.shared.isEnabled,
+                  let front = NSWorkspace.shared.frontmostApplication,
+                  front.activationPolicy == .regular,
+                  front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            if let error = FavoriteWindowSnap.shared.apply(layout, to: front.processIdentifier) {
+                ToolWindowManager.shared.showBanner(message: "창 정렬: " + error)
+            }
+        }
+        return noErr
+    }
+
+    private func ensureHandler() -> Bool {
+        if handlerRef != nil { return true }
+        var spec = EventTypeSpec(eventClass: UInt32(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        return InstallEventHandler(GetApplicationEventTarget(), Self.callback,
+                                   1, &spec, nil, &handlerRef) == noErr
+    }
+
+    private func register(_ layout: FavoriteWindowSnap.Layout, _ binding: Binding) -> OSStatus {
+        guard ensureHandler() else { return OSStatus(eventNotHandledErr) }
+        var ref: EventHotKeyRef?
+        let identifier = EventHotKeyID(signature: Self.signature, id: UInt32(layout.rawValue))
+        let result = RegisterEventHotKey(binding.code, binding.modifiers, identifier,
+                                         GetApplicationEventTarget(), 0, &ref)
+        if result == noErr, let installed = ref { refs[layout.rawValue] = installed }
+        return result
+    }
+    private func unregisterAll() {
+        for ref in refs.values { _ = UnregisterEventHotKey(ref) }
+        refs.removeAll()
+    }
+    private func persist() {
+        if let saved = try? PropertyListEncoder().encode(bindings) {
+            UserDefaults.standard.set(saved, forKey: Self.storageKey)
+        }
+    }
+    func start() {
+        active = true
+        refresh()
+    }
+    func stop() {
+        active = false
+        unregisterAll()
+        if let ref = handlerRef { _ = RemoveEventHandler(ref); handlerRef = nil }
+    }
+    func refresh() {
+        unregisterAll()
+        failedLayouts.removeAll()
+        guard active, FavoriteWindowSnap.shared.isEnabled else { return }
+        for (layout, _) in layouts {
+            if FavoriteMagnetPreferences.shared.isShortcutEnabled(layout),
+               let binding = bindings[String(layout.rawValue)], register(layout, binding) != noErr {
+                failedLayouts.insert(layout.rawValue)
+            }
+        }
+    }
+    private func label(for layout: FavoriteWindowSnap.Layout) -> String {
+        bindings[String(layout.rawValue)]?.label ?? "미지정"
+    }
+    func displayLabel(for layout: FavoriteWindowSnap.Layout) -> String { label(for: layout) }
+    func recordInSettings(_ layout: FavoriteWindowSnap.Layout) {
+        let item = NSMenuItem()
+        item.tag = layout.rawValue
+        recordShortcut(item)
+    }
+    func clearInSettings(_ layout: FavoriteWindowSnap.Layout) {
+        let item = NSMenuItem()
+        item.tag = layout.rawValue
+        clearShortcut(item)
+    }
+    func restoreMagnetDefaults() {
+        unregisterAll()
+        bindings.removeAll()
+        for (layout, preset) in Self.magnetDefaults() {
+            bindings[String(layout.rawValue)] = preset
+        }
+        persist()
+        refresh()
+        updateMenu()
+    }
+    func menuItem() -> NSMenuItem {
+        let parent = NSMenuItem(title: "⌨️ 창 정렬 전역 단축키", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "창 정렬 전역 단축키")
+        let intro = NSMenuItem(title: "기본 미지정 · 직접 등록 시에만 작동", action: nil, keyEquivalent: "")
+        intro.isEnabled = false
+        submenu.addItem(intro)
+        if !failedLayouts.isEmpty {
+            let warning = NSMenuItem(title: "⚠︎ \(failedLayouts.count)개 단축키 등록 실패 · 다른 앱과 충돌 확인", action: nil, keyEquivalent: "")
+            warning.isEnabled = false
+            submenu.addItem(warning)
+        }
+        submenu.addItem(NSMenuItem.separator())
+        for (layout, name) in layouts {
+            let row = NSMenuItem(title: "\(name) · \(label(for: layout))", action: nil, keyEquivalent: "")
+            let actions = NSMenu(title: name)
+            let edit = NSMenuItem(title: "단축키 직접 지정…", action: #selector(recordShortcut(_:)), keyEquivalent: "")
+            edit.target = self
+            edit.tag = layout.rawValue
+            actions.addItem(edit)
+            let clear = NSMenuItem(title: "이 단축키 해제", action: #selector(clearShortcut(_:)), keyEquivalent: "")
+            clear.target = self
+            clear.tag = layout.rawValue
+            clear.isEnabled = bindings[String(layout.rawValue)] != nil
+            actions.addItem(clear)
+            row.submenu = actions
+            submenu.addItem(row)
+        }
+        submenu.addItem(NSMenuItem.separator())
+        let clearAll = NSMenuItem(title: "모든 창 정렬 단축키 초기화…", action: #selector(clearAllShortcuts), keyEquivalent: "")
+        clearAll.target = self
+        clearAll.isEnabled = !bindings.isEmpty
+        submenu.addItem(clearAll)
+        parent.submenu = submenu
+        parent.isEnabled = FavoriteWindowSnap.shared.isEnabled
+        return parent
+    }
+    private func updateMenu() {
+        (NSApp.delegate as? AppDelegate)?.updateStatusBarMenu()
+    }
+    private func showError(_ message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "창 정렬 단축키를 저장하지 못했습니다"
+        alert.informativeText = message
+        alert.addButton(withTitle: "확인")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+    private func save(_ layout: FavoriteWindowSnap.Layout, binding: Binding?) -> String? {
+        if let new = binding {
+            if bindings.contains(where: { key, value in
+                key != String(layout.rawValue) && value.code == new.code && value.modifiers == new.modifiers
+            }) {
+                return "이미 다른 창 정렬 항목에 지정된 조합입니다."
+            }
+        }
+        let key = String(layout.rawValue)
+        let old = bindings[key]
+        // 같은 키를 다시 지정할 수도 있으므로 이전 등록을 잠깐 해제하고 시도합니다.
+        unregisterAll()
+        if let new = binding {
+            let result = register(layout, new)
+            if result != noErr {
+                refresh() // 성공한 이전 설정을 다시 복구합니다.
+                return "macOS 또는 다른 앱과 단축키가 충돌할 수 있습니다. (코드 \(result))\n기존 단축키는 유지합니다."
+            }
+            bindings[key] = new
+        } else {
+            bindings.removeValue(forKey: key)
+        }
+        persist()
+        refresh()
+        if old == nil && binding == nil { return nil }
+        return nil
+    }
+    @objc private func clearShortcut(_ item: NSMenuItem) {
+        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }
+        if let error = save(layout, binding: nil) { showError(error) }
+        updateMenu()
+    }
+    @objc private func clearAllShortcuts() {
+        let alert = NSAlert()
+        alert.messageText = "모든 창 정렬 단축키를 해제할까요?"
+        alert.informativeText = "Finder 휠과 잠자기 방지 단축키에는 영향을 주지 않습니다."
+        alert.addButton(withTitle: "초기화")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        unregisterAll()
+        bindings.removeAll()
+        persist()
+        refresh()
+        updateMenu()
+    }
+    @objc private func recordShortcut(_ item: NSMenuItem) {
+        guard let layout = FavoriteWindowSnap.Layout(rawValue: item.tag) else { return }
+        let name = layouts.first(where: { $0.0 == layout })?.1 ?? "창 정렬"
+        let alert = NSAlert()
+        alert.messageText = "\(name) 단축키 지정"
+        alert.informativeText = "Control/Option/Command/Shift 중 2개 이상 + 문자/방향키/Enter/Delete를 누르세요.\n선택한 조합이 아래에 표시되면 '저장'을 누르세요."
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+        alert.buttons[0].isEnabled = false
+        var selected: Binding?
+        // 녹화 중 기존 Carbon 창 정렬 키와 잠자기 토글이 실행되지 않도록 일시 해제.
+        unregisterAll()
+        FavoriteAwakeHotKey.shared.suspendForRecorder()
+        NSApp.activate(ignoringOtherApps: true)
+        let recorder = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            var modifiers: UInt32 = 0
+            var count = 0
+            if flags.contains(.control) { modifiers |= UInt32(controlKey); count += 1 }
+            if flags.contains(.option) { modifiers |= UInt32(optionKey); count += 1 }
+            if flags.contains(.shift) { modifiers |= UInt32(shiftKey); count += 1 }
+            if flags.contains(.command) { modifiers |= UInt32(cmdKey); count += 1 }
+            // 최소 두 수정키를 요구해 시스템/일반 타이핑과의 충돌을 최소화합니다.
+            guard count >= 2, event.keyCode != 53 else { return event }
+            let special: [UInt16: String] = [123: "←", 124: "→", 125: "↓", 126: "↑",
+                                            36: "↩", 48: "Tab", 49: "Space", 51: "⌫"]
+            let label = special[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "Key\(event.keyCode)"
+            selected = Binding(code: UInt32(event.keyCode), modifiers: modifiers, keyLabel: label)
+            alert.informativeText = "선택한 단축키: \(selected?.label ?? "")\n'저장'을 클릭하면 다른 앱과의 충돌을 검사합니다."
+            alert.buttons[0].isEnabled = true
+            return nil // 앱의 설정창에서만 캡처하며 다른 앱 이벤트는 가로채지 않습니다.
+        }
+        let choice = alert.runModal()
+        if let recorder = recorder { NSEvent.removeMonitor(recorder) }
+        FavoriteAwakeHotKey.shared.resumeAfterRecorder()
+        if choice == .alertFirstButtonReturn, let selected = selected {
+            if let error = save(layout, binding: selected) { showError(error) }
+        }
+        refresh()
+        updateMenu()
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     // MAGNET-S1: 메뉴에서 앞쪽 앱을 선택하기 위한 PID만 저장 (키/마우스 감시 없음)
     private var lastWindowSnapAppPID: pid_t?
@@ -3087,6 +3495,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupUltraLightEventTap()
         // Finder 휠의 읽기 전용 탭과 별도로, macOS에 잠자기 전역 단축키만 등록합니다.
         FavoriteAwakeHotKey.shared.startMonitoring()
+        FavoriteWindowSnapHotKeys.shared.start() // MAGNET-S3A
         updateStatusBarMenu()
         // 메인 메뉴가 준비된 후 1회만 검사합니다. 권한이 이미 정상이라면 아무것도 띄우지 않습니다.
         // 최초 폴더 안내와 겹쳐 두 창이 동시에 열리는 것도 방지합니다.
@@ -3268,7 +3677,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ("3분할 · 2/3", [
                 ("왼쪽 1/3", .leftThird), ("가운데 1/3", .middleThird),
                 ("오른쪽 1/3", .rightThird),
-                ("왼쪽 2/3", .leftTwoThirds), ("오른쪽 2/3", .rightTwoThirds)
+                ("왼쪽 2/3", .leftTwoThirds), ("가운데 2/3", .centerTwoThirds), ("오른쪽 2/3", .rightTwoThirds)
+            ]),
+            ("디스플레이 이동", [
+                ("다음 디스플레이", .nextDisplay), ("이전 디스플레이", .previousDisplay)
             ]),
             ("기타", [
                 ("화면에 최대한 크게 (전체 화면 모드 아님)", .maximize),
@@ -3280,10 +3692,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             let child = NSMenu(title: title)
             for (label, layout) in options {
+                guard FavoriteMagnetPreferences.shared.isVisibleInMenu(layout) else { continue }
                 let entry = NSMenuItem(title: label, action: #selector(applyWindowSnap(_:)), keyEquivalent: "")
                 entry.target = self
                 entry.tag = layout.rawValue
-                entry.isEnabled = snap.isEnabled
+                let isDisplayMove = layout == .nextDisplay || layout == .previousDisplay
+                entry.isEnabled = snap.isEnabled && (!isDisplayMove || NSScreen.screens.count > 1)
                 child.addItem(entry)
             }
             item.submenu = child
@@ -3303,6 +3717,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         edgeInfo.isEnabled = false
         submenu.addItem(edgeInfo)
         submenu.addItem(NSMenuItem.separator())
+        let settingsItem = NSMenuItem(title: "창 정렬 설정…", action: #selector(openMagnetSettings), keyEquivalent: "")
+        settingsItem.target = self
+        submenu.addItem(settingsItem) // MAGNET-S3B 한국어 통합 설정
+        submenu.addItem(NSMenuItem.separator())
         for line in FavoriteWindowSnapDrag.shared.diagnostics {
             let info = NSMenuItem(title: line, action: nil, keyEquivalent: "")
             info.isEnabled = false
@@ -3315,10 +3733,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return parent
     }
 
+    @objc private func openMagnetSettings() {
+        ToolWindowManager.shared.showHelpAndSettingsWindow(tab: 4)
+    }
+
     @objc private func toggleWindowSnapEnabled() {
         let snap = FavoriteWindowSnap.shared
         snap.setEnabled(!snap.isEnabled)
         FavoriteWindowSnapDrag.shared.refreshMonitoring()
+        FavoriteWindowSnapHotKeys.shared.refresh() // MAGNET-S3A
         updateStatusBarMenu()
     }
 
@@ -3506,6 +3929,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         FavoriteWindowSnapDrag.shared.stopMonitoring()
         NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        FavoriteWindowSnapHotKeys.shared.stop() // MAGNET-S3A
         FavoriteAwakeHotKey.shared.stopMonitoring()
         FavoriteAwakeManager.shared.shutdown()
         // 기존 휠 감시와 변환 처리 방식은 변경하지 않습니다.
