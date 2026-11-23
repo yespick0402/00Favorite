@@ -1726,7 +1726,7 @@ class ToolWindowManager {
         activeWindows.append(win)
     }
     
-    // MAGNET-S3C-UI1: 문구 맞춤 배너 / 화면 하단 / 여러 줄 표시.
+    // MAGNET-S3C-UI2: 문구 맞춤 하단 배너의 그림자 잘림/모서리 아티팩트 수정.
     // Finder 파일 드래그/단축키 이벤트에는 개입하지 않는 읽기 전용 알림입니다.
     func showBanner(message: String) {
         if !Thread.isMainThread {
@@ -1771,9 +1771,17 @@ class ToolWindowManager {
                 .frame(width: textWidth, alignment: .leading)
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .shadow(radius: 8)
+        // NSPanel의 투명 경계에서 material+blur shadow가 잘리며 사각 잔상을 남기던 원인 제거.
+        // 단일 불투명 라운드 배경만 그려 모서리 픽셀을 깔끔하게 유지합니다.
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: NSColor.windowBackgroundColor))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         let hosting = NSHostingView(rootView: content)
+        hosting.wantsLayer = true
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
+        hosting.layer?.masksToBounds = true
         // Dock을 포함한 화면 아래쪽의 사용 가능 영역 위에 표시합니다.
         let panel = NSPanel(
             contentRect: NSRect(x: visible.midX - bannerWidth / 2,
