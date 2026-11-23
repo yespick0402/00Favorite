@@ -181,7 +181,7 @@ jobs:
           if missing:
               raise SystemExit('ERROR: MAINT1 missing safety requirements: ' + ', '.join(missing))
           forbidden = [
-              'sudo', 'sqlite3', 'TCC.db', 'killall tccd',
+              '/bin/sh', 'sqlite3', 'TCC.db', 'killall tccd',
               'process.arguments = ["reset", "All"]',
               'rm -rf', 'system("',
           ]
