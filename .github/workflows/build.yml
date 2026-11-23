@@ -63,7 +63,7 @@ jobs:
           # LOGIN1: macOS ServiceManagement API와 설정 UI, 메뉴 액션이 함께 들어왔는지 확인합니다.
           grep -q 'import ServiceManagement' Part1.swift || { echo 'ERROR: ServiceManagement import 누락'; exit 1; }
           grep -q 'SMAppService.mainApp' Part1.swift || { echo 'ERROR: 로그인 항목 등록 API 누락'; exit 1; }
-          grep -q 'Mac 로그인 시 00Favorite 자동 실행' Part1.swift || { echo 'ERROR: 로그인 자동 실행 설정 UI 누락'; exit 1; }
+          grep -q 'Toggle("Mac 로그인 시 00Favorite 자동 실행"' SetupCleanup.swift || { echo 'ERROR: 통합 관리 화면 로그인 자동 실행 설정 UI 누락'; exit 1; }
           grep -q '#selector(toggleLaunchAtLogin)' Part2.swift || { echo 'ERROR: 로그인 항목 메뉴 누락'; exit 1; }
           # MAGNET-S2: 기존 AX 메뉴 정렬 + 독립 읽기 전용 창 드래그 감시.
           python3 - <<'PY_WINDOW_SNAP'
