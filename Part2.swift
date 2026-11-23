@@ -2770,16 +2770,25 @@ final class FavoriteWindowSnap {
         var pos = CGPoint(x: rect.minX, y: primaryScreenTop - rect.maxY)
         guard let sizeValue = AXValueCreate(.cgSize, &size),
               let pointValue = AXValueCreate(.cgPoint, &pos) else { return "창 정렬 위치를 계산하지 못했습니다." }
-        // 크기를 먼저 정하고 위치를 두 번 지정하여 앱별 최소 크기 보정에 대응합니다.
+        // MAGNET-S3C-FIX1: 오른쪽 절반/우상단/우하단에서 최대화할 때
+        // 크기를 먼저 키우면 Chrome 등의 앱이 오른쪽 화면 경계에서 폭을 제한합니다.
+        // 반드시 목표 위치로 먼저 옮긴 다음 크기를 변경하고 마지막에 위치를 재확인합니다.
+        _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
         let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
         let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
         if sizeResult != .success || positionResult != .success {
             return "이 창은 크기 또는 위치 변경을 허용하지 않습니다. (크기: \(sizeResult.rawValue), 위치: \(positionResult.rawValue))"
         }
-        _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+        // 일부 앱은 첫 번째 크기 조정 시 과도기적인 제약을 적용합니다.
+        // 목표 위치를 유지한 채 딱 한 번만 재조정하여 무한 반복을 방지합니다.
         if let actual = readFrame(window),
            abs(actual.width - rect.width) > 24 || abs(actual.height - rect.height) > 24 {
-            return "창이 지원하는 최소/최대 크기 제한으로 요청한 크기와 다르게 배치됐습니다."
+            _ = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+            _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+            if let corrected = readFrame(window),
+               abs(corrected.width - rect.width) > 24 || abs(corrected.height - rect.height) > 24 {
+                return "창이 지원하는 최소/최대 크기 제한으로 요청한 크기와 다르게 배치됐습니다."
+            }
         }
         return nil
     }
