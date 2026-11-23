@@ -54,6 +54,9 @@ private enum FavoriteAppPrivacyMaintenance {
         // Finder 원본 파일, 변환 결과물, 임의 폴더 및 다른 앱의 설정은 삭제하지 않습니다.
         if isCurrentAppVerified {
             UserDefaults.standard.removePersistentDomain(forName: expectedBundleID)
+            // 재설치 시 과거 MyTangerine 설정이 자동으로 다시 유입되지 않도록,
+            // 개인정보를 담지 않는 1회성 이관 완료 표시만 남깁니다.
+            UserDefaults.standard.set(true, forKey: "favorite_legacy_settings_migrated_hk8")
             UserDefaults.standard.synchronize()
         }
         NSApp.terminate(nil)
