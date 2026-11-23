@@ -2934,6 +2934,14 @@ final class FavoriteWindowSnapDrag {
     var isEnabled: Bool { UserDefaults.standard.bool(forKey: key) }
     var isMonitoring: Bool { monitor != nil }
 
+    // 권한과 ON/OFF 상태를 구분하여 드래그가 작동하지 않는 이유를 설정에서 바로 확인합니다.
+    var connectionStatus: String {
+        if !FavoriteWindowSnap.shared.isEnabled { return "창 정렬이 꺼져 있습니다" }
+        if !isEnabled { return "드래그 정렬이 꺼져 있습니다" }
+        if !AXIsProcessTrusted() { return "손쉬운 사용 권한이 필요합니다" }
+        return isMonitoring ? "드래그 감시 연결됨" : "드래그 감시 연결되지 않음"
+    }
+
     var diagnostics: [String] {
         let ready = isMonitoring ? "감시 연결" : "감시 없음"
         return [
@@ -2953,7 +2961,7 @@ final class FavoriteWindowSnapDrag {
     func refreshMonitoring() {
         guard isEnabled, FavoriteWindowSnap.shared.isEnabled, AXIsProcessTrusted() else {
             stopMonitoring()
-            lastStage = !AXIsProcessTrusted() ? "기기 제어 권한 필요" : "창 정렬 설정 OFF"
+            lastStage = connectionStatus
             return
         }
         guard monitor == nil else { return }
@@ -2961,6 +2969,13 @@ final class FavoriteWindowSnapDrag {
             self?.process(event)
         }
         lastStage = monitor == nil ? "AppKit 전역 마우스 감시 생성 실패" : "드래그 감시 연결됨"
+    }
+
+    // macOS 권한 재승인 직후에도 앱을 재설치하지 않고 감시를 다시 연결할 수 있습니다.
+    // 실행 중인 다른 입력 감시(Finder 휠)는 전혀 변경하지 않습니다.
+    func reconnectMonitoring() {
+        stopMonitoring()
+        refreshMonitoring()
     }
 
     func stopMonitoring() {
@@ -3708,27 +3723,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let help = NSMenuItem(title: "선택한 앱의 창 정렬 · 손쉬운 사용 권한 필요", action: nil, keyEquivalent: "")
         help.isEnabled = false
         submenu.addItem(help)
-        let edgeItem = NSMenuItem(title: "화면 가장자리 드래그 정렬", action: #selector(toggleWindowSnapDragEnabled), keyEquivalent: "")
-        edgeItem.target = self
-        edgeItem.state = FavoriteWindowSnapDrag.shared.isEnabled ? .on : .off
-        edgeItem.isEnabled = snap.isEnabled
-        submenu.addItem(edgeItem)
-        let edgeInfo = NSMenuItem(title: "제목 표시줄 드래그 → 가장자리 미리보기 → 놓으면 정렬", action: nil, keyEquivalent: "")
-        edgeInfo.isEnabled = false
-        submenu.addItem(edgeInfo)
-        submenu.addItem(NSMenuItem.separator())
-        let settingsItem = NSMenuItem(title: "창 정렬 설정…", action: #selector(openMagnetSettings), keyEquivalent: "")
+        // S3-E: 중복된 드래그 ON/OFF 및 진단 메뉴는 설정 화면으로 이동합니다.
+        // 메뉴에는 기존 창 정렬 실행과 단일 설정 진입점만 남깁니다.
+        let settingsItem = NSMenuItem(title: "창 정렬 설정 및 드래그 상태…", action: #selector(openMagnetSettings), keyEquivalent: "")
         settingsItem.target = self
-        submenu.addItem(settingsItem) // MAGNET-S3B 한국어 통합 설정
-        submenu.addItem(NSMenuItem.separator())
-        for line in FavoriteWindowSnapDrag.shared.diagnostics {
-            let info = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-            info.isEnabled = false
-            submenu.addItem(info)
-        }
-        let reset = NSMenuItem(title: "드래그 진단 초기화", action: #selector(resetWindowSnapDragDiagnostics), keyEquivalent: "")
-        reset.target = self
-        submenu.addItem(reset)
+        submenu.addItem(settingsItem)
         parent.submenu = submenu
         return parent
     }
@@ -3742,17 +3741,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         snap.setEnabled(!snap.isEnabled)
         FavoriteWindowSnapDrag.shared.refreshMonitoring()
         FavoriteWindowSnapHotKeys.shared.refresh() // MAGNET-S3A
-        updateStatusBarMenu()
-    }
-
-    @objc private func resetWindowSnapDragDiagnostics() {
-        FavoriteWindowSnapDrag.shared.resetDiagnostics()
-        updateStatusBarMenu()
-    }
-
-    @objc private func toggleWindowSnapDragEnabled() {
-        let drag = FavoriteWindowSnapDrag.shared
-        drag.setEnabled(!drag.isEnabled)
         updateStatusBarMenu()
     }
 
