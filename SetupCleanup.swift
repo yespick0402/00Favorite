@@ -64,6 +64,7 @@ private enum FavoriteAppPrivacyMaintenance {
 }
 
 struct FavoriteSetupCleanupView: View {
+    @Environment(\.dismiss) private var dismiss
     @State private var inputGranted = CGPreflightListenEventAccess()
     @State private var accessibilityGranted = AXIsProcessTrusted()
     @State private var loginState = FavoriteLaunchAtLogin.statusDescription
@@ -183,17 +184,27 @@ struct FavoriteSetupCleanupView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Image(systemName: "checkmark.shield").font(.title2).foregroundColor(.orange)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("00Favorite 설치·삭제 관리").font(.title2.bold())
-                        Text("새 버전을 설치할 때와 앱을 지우기 전에 사용하는 관리 도구")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
+        VStack(spacing: 0) {
+            // MAINT1-FIX1: 스크롤 위치와 상관없이 항상 보이는 상단 닫기 버튼.
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.shield").font(.title2).foregroundColor(.orange)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("00Favorite 설치·삭제 관리").font(.title2.bold())
+                    Text("새 버전을 설치할 때와 앱을 지우기 전에 사용하는 관리 도구")
+                        .font(.caption).foregroundColor(.secondary)
                 }
-                GroupBox("1. 새 설치 후 한 번에 설정 시작") {
+                Spacer(minLength: 12)
+                Button("닫기") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(cleaning)
+                    .accessibilityLabel("설치·삭제 관리 닫기")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    GroupBox("1. 새 설치 후 한 번에 설정 시작") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("버튼 한 번으로 현재 권한을 점검하고 필요한 macOS 승인 요청을 시작합니다. 보안 권한을 실제로 켜는 마지막 클릭은 macOS에서 직접 승인해야 합니다.")
                             .font(.caption).foregroundColor(.secondary)
@@ -295,7 +306,8 @@ struct FavoriteSetupCleanupView: View {
                 Text("정리 대상 식별자: \(Bundle.main.bundleIdentifier ?? "식별자 없음") · 다른 앱과 사용자 파일은 변경하지 않습니다.")
                     .font(.caption2).foregroundColor(.secondary)
                     .textSelection(.enabled)
-            }.padding(20)
+                }.padding(20)
+            }
         }
         .frame(minWidth: 650, minHeight: 570)
         .onAppear { refreshStatus() }
