@@ -2613,8 +2613,22 @@ final class FavoriteWindowSnap {
             }
             return setFrame(target, for: window)
         }
-        let target = FavoriteMagnetPreferences.shared.customFrame(layout, visible: screen.visibleFrame)
+        var target = FavoriteMagnetPreferences.shared.customFrame(layout, visible: screen.visibleFrame)
             ?? layoutFrame(layout, visible: screen.visibleFrame, current: current)
+
+        // MAGNET-S3D: 같은 정렬 키를 반복하면 물리적으로 인접한 모니터로 넘어갑니다.
+        // 1번 오른쪽 절반 + ⌃⌥→ 다시 입력 → 2번 왼쪽 절반.
+        // 2번 왼쪽 절반 + ⌃⌥← 다시 입력 → 1번 오른쪽 절반.
+        // 첫 입력, 단일 모니터, 모니터 바깥 끝에서는 종전 절반 정렬을 유지합니다.
+        if layout == .rightHalf || layout == .leftHalf {
+            let alreadySnapped = matchesWindowFrame(current, target: target)
+            if alreadySnapped,
+               let next = horizontalNeighbor(from: screen, toRight: layout == .rightHalf) {
+                let incoming: Layout = layout == .rightHalf ? .leftHalf : .rightHalf
+                target = FavoriteMagnetPreferences.shared.customFrame(incoming, visible: next.visibleFrame)
+                    ?? layoutFrame(incoming, visible: next.visibleFrame, current: current)
+            }
+        }
         if key == nil { originals[pid, default: []].append(OriginalWindow(window: window, frame: current)) }
         return setFrame(target, for: window)
     }
@@ -2814,8 +2828,33 @@ final class FavoriteWindowSnap {
         })
     }
 
+    // 반복 좌우 정렬은 화면의 실제 배치를 따릅니다. 끝에서는 순환하지 않습니다.
+    // 1pt 이하 차이는 같은 x 위치로 취급하여 같은 열의 화면을 잘못 선택하지 않습니다.
+    private func horizontalNeighbor(from current: NSScreen, toRight: Bool) -> NSScreen? {
+        let other = NSScreen.screens.filter { screen in
+            toRight ? screen.frame.midX > current.frame.midX + 1
+                    : screen.frame.midX < current.frame.midX - 1
+        }
+        return other.min { lhs, rhs in
+            let xA = abs(lhs.frame.midX - current.frame.midX)
+            let xB = abs(rhs.frame.midX - current.frame.midX)
+            if abs(xA - xB) > 1 { return xA < xB }
+            return abs(lhs.frame.midY - current.frame.midY) <
+                   abs(rhs.frame.midY - current.frame.midY)
+        }
+    }
+
+    private func matchesWindowFrame(_ actual: CGRect, target: CGRect) -> Bool {
+        // AX 접근성 API는 앱별 최소 크기 및 반올림으로 몇 pt의 오차가 날 수 있습니다.
+        let tolerance: CGFloat = 24
+        return abs(actual.minX - target.minX) <= tolerance &&
+               abs(actual.minY - target.minY) <= tolerance &&
+               abs(actual.width - target.width) <= tolerance &&
+               abs(actual.height - target.height) <= tolerance
+    }
+
     // 디스플레이 배열의 API 순서 대신 실제 화면상의 좌→우, 동률이면 위→아래 순서 사용.
-    // 가장 끝 모니터에서 다음/이전 이동은 순환합니다.
+    // 별도의 다음/이전 디스플레이 메뉴 명령은 기존처럼 마지막 화면에서 순환합니다.
     private func adjacentDisplay(from current: NSScreen, forward: Bool) -> NSScreen? {
         let ordered = NSScreen.screens.sorted { a, b in
             if a.frame.midX != b.frame.midX { return a.frame.midX < b.frame.midX }
@@ -3101,10 +3140,7 @@ final class FavoriteWindowSnapHotKeys: NSObject {
             (.rightTwoThirds, Binding(code: 17, modifiers: three, keyLabel: "T")),
             (.maximize, Binding(code: 36, modifiers: two, keyLabel: "↩")),
             (.center, Binding(code: 8, modifiers: two, keyLabel: "C")),
-            (.restore, Binding(code: 51, modifiers: two, keyLabel: "⌫")),
-            // MAINT1-FIX1/S3D: 두 모니터에서 창만 이동. 기존 ⌃⌥ ←/→ 반쪽 정렬과 구분.
-            (.nextDisplay, Binding(code: 124, modifiers: three, keyLabel: "→")),
-            (.previousDisplay, Binding(code: 123, modifiers: three, keyLabel: "←"))
+            (.restore, Binding(code: 51, modifiers: two, keyLabel: "⌫"))
         ]
     }
     private var bindings: [String: Binding] = [:]
@@ -3130,28 +3166,6 @@ final class FavoriteWindowSnapHotKeys: NSObject {
             }
             persist()
             UserDefaults.standard.set(true, forKey: migrationKey)
-        }
-        // 이전 S3-C 설치자는 기본값 마이그레이션이 이미 끝났으므로
-        // 새 모니터 이동 단축키 두 개만 '미지정 + 충돌 없음'일 때 1회 추가합니다.
-        // 기존 사용자 지정 값이나 다른 정렬 단축키를 덮어쓰지 않습니다.
-        let displayMigrationKey = "favorite_magnet_s3d_display_hotkeys_default_v1"
-        if !UserDefaults.standard.bool(forKey: displayMigrationKey) {
-            let defaults = Self.magnetDefaults().filter {
-                $0.0 == .nextDisplay || $0.0 == .previousDisplay
-            }
-            var inserted = false
-            for (layout, preset) in defaults {
-                let name = String(layout.rawValue)
-                let occupied = bindings.values.contains {
-                    $0.code == preset.code && $0.modifiers == preset.modifiers
-                }
-                if bindings[name] == nil && !occupied {
-                    bindings[name] = preset
-                    inserted = true
-                }
-            }
-            if inserted { persist() }
-            UserDefaults.standard.set(true, forKey: displayMigrationKey)
         }
     }
 
