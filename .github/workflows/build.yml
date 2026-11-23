@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3D-MAINT1-FIX1
+  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3D-REPEAT-MAINT1-FIX1
 
 jobs:
   build:
@@ -180,21 +180,34 @@ jobs:
           assert '.shadow(radius:' not in banner_code, 'ERROR: clipped toast shadow reintroduced'
           assert '.background(.regularMaterial' not in banner_code, 'ERROR: translucent corner artifacts reintroduced'
           print('MAGNET-S3C UI1/FIX1 text-fit bottom banner / right-origin maximize: VERIFIED')
-          # S3-D: global display navigation defaults retain existing hotkeys and never change Finder tap.
-          hotkeys = source2.split('final class FavoriteWindowSnapHotKeys:', 1)[1]
-          required_display = [
-              '(.nextDisplay, Binding(code: 124, modifiers: three, keyLabel: "→"))',
-              '(.previousDisplay, Binding(code: 123, modifiers: three, keyLabel: "←"))',
-              'favorite_magnet_s3d_display_hotkeys_default_v1',
-              'if bindings[name] == nil && !occupied',
-              'if inserted { persist() }',
+          # S3-D: repeating standard half-snap keys on an edge crosses to the adjacent display.
+          required_repeat = [
+              'if layout == .rightHalf || layout == .leftHalf {',
+              'let alreadySnapped = matchesWindowFrame(current, target: target)',
+              'horizontalNeighbor(from: screen, toRight: layout == .rightHalf)',
+              'let incoming: Layout = layout == .rightHalf ? .leftHalf : .rightHalf',
+              'private func horizontalNeighbor(from current: NSScreen, toRight: Bool)',
+              'private func matchesWindowFrame(_ actual: CGRect, target: CGRect)',
+              'let tolerance: CGFloat = 24',
           ]
-          missing_display = [x for x in required_display if x not in hotkeys]
-          if missing_display: raise SystemExit('ERROR: S3-D hotkey defaults missing: ' + ', '.join(missing_display))
+          missing_repeat = [marker for marker in required_repeat if marker not in source2]
+          if missing_repeat: raise SystemExit('ERROR: S3-D repeat-snap missing: ' + ', '.join(missing_repeat))
           assert source2.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder CGEventTap isolation changed'
+          assert 'favorite_magnet_s3d_display_hotkeys_default_v1' not in source2, 'ERROR: unwanted extra hotkey migration'
+          hotkeys = source2.split('final class FavoriteWindowSnapHotKeys:', 1)[1]
+          assert '(.leftHalf, Binding(code: 123, modifiers: two, keyLabel: "←"))' in hotkeys
+          assert '(.rightHalf, Binding(code: 124, modifiers: two, keyLabel: "→"))' in hotkeys
+          assert '(.nextDisplay, Binding(code: 124, modifiers: three' not in hotkeys
+          assert '(.previousDisplay, Binding(code: 123, modifiers: three' not in hotkeys
           setting = Path('MagnetSettings.swift').read_text()
-          assert '다음 ⌃⌥⌘→ / 이전 ⌃⌥⌘←' in setting, 'ERROR: shortcut help missing'
-          print('MAGNET-S3D monitor navigation hotkeys / safe one-time migration: VERIFIED')
+          assert '한 번 더 누르면 오른쪽 모니터 왼쪽 절반' in setting, 'ERROR: shortcut help missing'
+          assert '한 번 더 누르면 왼쪽 모니터 오른쪽 절반' in setting, 'ERROR: reverse shortcut help missing'
+          # Confirm crossing happens before ordinary snap, and original position is saved once.
+          repeat = source2.split('// MAGNET-S3D: 같은 정렬 키를 반복하면', 1)[1]
+          repeat = repeat.split('return setFrame(target, for: window)', 1)[0]
+          assert repeat.index('horizontalNeighbor(') < repeat.index('if key == nil')
+          assert 'originals[pid, default: []].append(OriginalWindow(window: window, frame: current))' in repeat
+          print('MAGNET-S3D repeated half-snap edge crossing / symmetric target / original restore: VERIFIED')
           PY_MAGNET_S3C
           # MAINT1: only current app bundle ID, explicit action, no privilege escalation or other-app TCC reset.
           python3 - <<'PY_FAVORITE_MAINT1'
@@ -504,6 +517,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-MAGNET-S3D-MAINT1-FIX1-Mac-ARM64
+          name: 00Favorite-4.8-MAGNET-S3D-REPEAT-MAINT1-FIX1-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
