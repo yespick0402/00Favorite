@@ -9,7 +9,7 @@ on:
 
 # One source of truth: app build identity. Do not duplicate this literal in checks.
 env:
-  FAVORITE_BUILD_ID: FAV-20261123-HK13-MAGNET-S3D-REPEAT-MAINT1-FIX1
+  FAVORITE_BUILD_ID: FAV-20261125-ACTIONS-RESIZE-01-MAGNET-S3D
 
 jobs:
   build:
@@ -28,9 +28,10 @@ jobs:
           test -s Part2.swift || { echo 'ERROR: Part2.swift 없음'; exit 1; }
           test -s MagnetSettings.swift || { echo 'ERROR: MagnetSettings.swift 없음'; exit 1; }
           test -s SetupCleanup.swift || { echo 'ERROR: SetupCleanup.swift 없음'; exit 1; }
+          test -s ImageResize.swift || { echo 'ERROR: ImageResize.swift 없음'; exit 1; }
           test -s icon.png || { echo 'ERROR: icon.png 없음'; exit 1; }
           test -s icon_awake.png || { echo 'ERROR: icon_awake.png 없음'; exit 1; }
-          cat Part1.swift Part2.swift MagnetSettings.swift SetupCleanup.swift > combined_main.swift
+          cat Part1.swift Part2.swift MagnetSettings.swift SetupCleanup.swift ImageResize.swift > combined_main.swift
           # Swift 구문 검사로는 SDK 이름 변경 오류를 검출할 수 없으므로 구형 상수를 차단합니다.
           if grep -nF 'kCFRunLoopCommonModes' combined_main.swift; then
             echo 'ERROR: 구형 CoreFoundation 상수. CFRunLoopMode.commonModes를 사용하세요.' >&2
@@ -275,6 +276,55 @@ jobs:
               raise SystemExit('ERROR: photo capture-date extensions missing: ' + str(sorted(missing)))
           print('Capture date photo formats ARW/HEIF/HEIC/HIF: VERIFIED')
           PY_HIF
+          # RESIZE-01: ensure the real ACTIONS wheel accepts image-only resize and preserves Finder.
+          python3 - <<'PY_RESIZE'
+          from pathlib import Path
+          main = Path('Part1.swift').read_text()
+          bridge = Path('Part2.swift').read_text()
+          resize = Path('ImageResize.swift').read_text()
+          expected_main = [
+              'FavoriteImageResizeProcessor.isCandidate($0)',
+              'actionKey: "act_resize_images"',
+              'showImageResizeWindow(urls: files)',
+              'FavoriteImageResizeView(files: urls)',
+              '4. 이미지 픽셀 크기 일괄 조정 (ACTIONS)',
+          ]
+          for item in expected_main:
+              assert item in main, 'ERROR: ACTIONS RESIZE route missing: ' + item
+          assert '"act_join_images", "act_resize_images", "tool_rename_date"' in bridge, 'ERROR: deferred native ACTIONS drop blocks resize'
+          assert bridge.count('CGEvent.tapCreate(') == 1, 'ERROR: Finder mouse tap unexpectedly changed'
+          expected_resize = [
+              'enum FavoriteResizeBasis', 'case width', 'case height', 'case longEdge', 'case percent',
+              'enum FavoriteResizeFormat', 'case original', 'case png', 'case heic',
+              'FavoriteImageResizeCancellation',
+          ]
+          # The cancellation class name is deliberately scoped under Favorite.
+          expected_resize[-1] = 'final class FavoriteResizeCancellation'
+          for item in expected_resize:
+              assert item in resize, 'ERROR: resize UI mode/engine missing: ' + item
+          safety = [
+              'kCGImageSourceCreateThumbnailWithTransform: true',
+              'private static let maxPixels = 60_000_000',
+              'allowUpscale ? multiplier : min(multiplier, 1.0)',
+              'FileProcessor.uniqueOutputURL(for: file',
+              'FileManager.default.moveItem(at: temp, to: dest)',
+              'defer { try? FileManager.default.removeItem(at: temp) }',
+              'FileProcessor.preserveFileDates(from: file, to: dest)',
+              'func cancel()', 'if cancelled.isCancelled',
+              'CGImageSourceGetCount(source) == 1',
+              'kCGImagePropertyExifPixelXDimension',
+              'kCGImagePropertyGPSDictionary',
+              'JobProgressManager.shared.updateJob',
+              'FavoriteImageResizeProcessor.start(files: files',
+          ]
+          for item in safety:
+              assert item in resize, 'ERROR: resize data safety/progress guard missing: ' + item
+          forbidden = ['FileManager.default.removeItem(at: file)', 'try? FileManager.default.removeItem(at: dest)',
+                       'FileManager.default.replaceItemAt(', 'FileManager.default.copyItem(at: file, to: file)']
+          for item in forbidden:
+              assert item not in resize, 'ERROR: unsafe input mutation detected: ' + item
+          print('ACTIONS RESIZE-01 original isolation / one-or-many images / sizing / batch cancellation: VERIFIED')
+          PY_RESIZE
 
       - name: Preflight - macOS SDK Swift typecheck
         shell: bash
@@ -517,6 +567,6 @@ jobs:
       - name: Upload Finished Mac App
         uses: actions/upload-artifact@v4
         with:
-          name: 00Favorite-4.8-MAGNET-S3D-REPEAT-MAINT1-FIX1-Mac-ARM64
+          name: 00Favorite-4.8-ACTIONS-RESIZE-01-Mac-ARM64
           path: 00Favorite.zip
           if-no-files-found: error
