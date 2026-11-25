@@ -4092,7 +4092,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     } else {
                         // 휠에서 명시적으로 선택한 ACTIONS 항목만; 일반 Finder 드롭은 실행하지 않습니다.
                         let permitted = Set(["act_copy_path", "act_terminal", "act_airdrop", "act_finder",
-                                             "act_duplicate", "act_join_images", "tool_rename_date"])
+                                             "act_duplicate", "act_join_images", "act_resize_images", "tool_rename_date"])
                         guard permitted.contains(action) else { return nil }
                     }
                     return action
