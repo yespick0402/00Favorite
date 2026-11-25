@@ -405,9 +405,10 @@ enum FavoriteImageResizeProcessor {
             kCGImageSourceThumbnailMaxPixelSize: max(target.width, target.height),
             kCGImageSourceShouldCacheImmediately: false
         ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOpts as CFDictionary)
-                         ?? CGImageSourceCreateImageAtIndex(source, 0, noCache as CFDictionary) else {
-            return (nil, "이미지를 디코딩하지 못했습니다.")
+        // 전체 원본 디코딩 fallback을 금지합니다. 초대형 카메라 사진을 무심코
+        // 풀사이즈로 메모리에 올리는 대신, 다운샘플링 실패를 파일별로 보고합니다.
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOpts as CFDictionary) else {
+            return (nil, "다운샘플링할 수 없는 형식입니다. PNG/JPG로 변환 후 다시 시도해 주세요.")
         }
         if cancelled.isCancelled { return (nil, nil) }
         let format = outputType(for: file, selection: options.outputFormat)
