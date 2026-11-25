@@ -304,6 +304,7 @@ jobs:
               assert item in resize, 'ERROR: resize UI mode/engine missing: ' + item
           safety = [
               'kCGImageSourceCreateThumbnailWithTransform: true',
+              'CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOpts as CFDictionary)',
               'private static let maxPixels = 60_000_000',
               'allowUpscale ? multiplier : min(multiplier, 1.0)',
               'FileProcessor.uniqueOutputURL(for: file',
@@ -319,6 +320,7 @@ jobs:
           ]
           for item in safety:
               assert item in resize, 'ERROR: resize data safety/progress guard missing: ' + item
+          assert 'CGImageSourceCreateImageAtIndex(source, 0' not in resize, 'ERROR: unbounded full-resolution decode fallback forbidden'
           forbidden = ['FileManager.default.removeItem(at: file)', 'try? FileManager.default.removeItem(at: dest)',
                        'FileManager.default.replaceItemAt(', 'FileManager.default.copyItem(at: file, to: file)']
           for item in forbidden:
