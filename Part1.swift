@@ -680,6 +680,11 @@ class AppState: ObservableObject {
             if draggedFiles.filter({ ImageJoinProcessor.isSupportedImage($0) }).count >= 2 {
                 items.append(WheelItem(title: "이미지 합치기", icon: "square.stack", actionKey: "act_join_images"))
             }
+            // 단일 이미지부터 일괄 변경 가능. 비이미지 드래그 때는 RESIZE 조각을 숨깁니다.
+            if draggedFiles.contains(where: { FavoriteImageResizeProcessor.isCandidate($0) }) {
+                items.append(WheelItem(title: "이미지 크기 변경", icon: "arrow.up.left.and.arrow.down.right",
+                                       actionKey: "act_resize_images"))
+            }
         }
     }
 }
@@ -1085,6 +1090,7 @@ class FileProcessor {
     static func execute(actionKey: String, files: [URL], openQualityPopup: Bool = false) {
         guard !files.isEmpty else { return }
         if actionKey == "act_join_images" { ToolWindowManager.shared.showImageJoinWindow(urls: files); return }
+        if actionKey == "act_resize_images" { ToolWindowManager.shared.showImageResizeWindow(urls: files); return }
         if actionKey == "tool_rename_date" { batchRenameFilesWithCaptureDate(files: files); return }
         if actionKey == "tool_edit_photo", let first = files.first { ToolWindowManager.shared.showEditPhotoWindow(url: first); return }
         if actionKey == "tool_crop", let first = files.first { ToolWindowManager.shared.showRedactCropWindow(url: first, initialTab: 1); return }
@@ -1812,6 +1818,10 @@ class ToolWindowManager {
     func showImageJoinWindow(urls: [URL]) {
         openWindow(title: "이미지 세로 합치기", view: ImageJoinView(files: urls), size: NSSize(width: 780, height: 660), minSize: NSSize(width: 640, height: 500))
     }
+    func showImageResizeWindow(urls: [URL]) {
+        openWindow(title: "이미지 크기 변경", view: FavoriteImageResizeView(files: urls),
+                   size: NSSize(width: 790, height: 720), minSize: NSSize(width: 690, height: 610))
+    }
     func showHelpAndSettingsWindow(tab: Int? = nil) {
         // 설명 및 설정은 단 하나의 창만 유지합니다. 최소화·가림·닫힘 상태도 복원합니다.
         if let window = settingsWindow {
@@ -2455,7 +2465,12 @@ struct HelpAndSettingsView: View {
                     "열린 창에서 순서, 가로폭, 간격, PNG/JPG/TIFF 또는 자동(초장축 TIFF 전환) 형식을 선택합니다.",
                     "원본 이미지는 수정하지 않으며 첫 번째 이미지가 있는 폴더에 새 파일을 만듭니다. 매우 긴 이미지는 메모리 보호를 위해 여러 장으로 자동 분할됩니다."
                 ])
-                guideCard(icon: "character.cursor.ibeam", title: "4. 수천 개 대량 파일 촬영일자 이름 일괄 변환 (RENAME)", items: [
+                guideCard(icon: "arrow.up.left.and.arrow.down.right", title: "4. 이미지 픽셀 크기 일괄 조정 (ACTIONS)", items: [
+                    "Finder에서 이미지 1장 이상을 드래그하며 Control 키를 눌러 ACTIONS 휠을 열고 [이미지 크기 변경]에 놓습니다.",
+                    "가로·세로·긴 변 픽셀 또는 원본 대비 비율을 선택합니다. 가로세로 비율은 유지하며 원본과 같은 폴더에 새 파일을 만듭니다.",
+                    "작업 창에서 진행률·중단·파일별 오류를 확인할 수 있습니다. 원본 사진과 파일명은 변경하지 않습니다."
+                ])
+                guideCard(icon: "character.cursor.ibeam", title: "5. 수천 개 대량 파일 촬영일자 이름 일괄 변환 (RENAME)", items: [
                     "2,000개 이상의 사진이나 영상도 한꺼번에 잡고 TOOLS 또는 ACTIONS 휠의 [RENAME]에 놓으면 누락 없이 전수 스캔하여 일괄 변경합니다.",
                     "백그라운드 엔진이 작동하여 상단 메뉴바 아이콘 옆에 실시간 진행 퍼센트(%)가 표시됩니다."
                 ])
